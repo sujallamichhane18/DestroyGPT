@@ -1,11 +1,10 @@
 import os
 import sys
-import json
 import time
+import json
 import requests
 from rich.console import Console
 from rich.prompt import Prompt
-from rich.panel import Panel
 
 console = Console()
 API_KEY_FILE = os.path.expanduser("~/.destroygpt_api_key")
@@ -47,14 +46,7 @@ def get_api_key():
     save_api_key_securely(api_key)
     return api_key
 
-def show_welcome():
-    welcome_text = """\
-Hey. DestroyGPT here.  
-What do you need? Drop a command, payload, or recon tactic — be specific. Let's hack (ethically).
-"""
-    console.print(Panel(welcome_text, title="DestroyGPT", border_style="green"))
-
-def stream_completion(api_key, messages, model="deepseek/deepseek-r1-0528:free"):
+def stream_completion(api_key, user_prompt, model="deepseek/deepseek-r1-0528:free"):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -64,7 +56,17 @@ def stream_completion(api_key, messages, model="deepseek/deepseek-r1-0528:free")
 
     payload = {
         "model": model,
-        "messages": messages,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are DestroyGPT, a CLI assistant for ethical hackers. "
+                    "Provide fast, clear, minimal, and direct help with penetration testing, payloads, "
+                    "reconnaissance, and exploits — always ethical."
+                )
+            },
+            {"role": "user", "content": user_prompt}
+        ],
         "stream": True
     }
 
@@ -72,9 +74,9 @@ def stream_completion(api_key, messages, model="deepseek/deepseek-r1-0528:free")
         with requests.post(API_URL, headers=headers, json=payload, stream=True, timeout=60) as response:
             if response.status_code != 200:
                 console.print(f"[red]API Error {response.status_code}: {response.text}[/red]")
-                return None
+                return
 
-            collected = []
+            buffer = ""
             for line in response.iter_lines(decode_unicode=True):
                 if line and line.startswith("data: "):
                     data_str = line[len("data: "):]
@@ -84,36 +86,14 @@ def stream_completion(api_key, messages, model="deepseek/deepseek-r1-0528:free")
                         data_json = json.loads(data_str)
                         delta = data_json["choices"][0]["delta"].get("content", "")
                         print(delta, end="", flush=True)
-                        collected.append(delta)
                     except Exception:
                         continue
             print()
-            return "".join(collected).strip()
 
     except requests.exceptions.RequestException as e:
         console.print(f"[red]Request error: {e}[/red]")
     except Exception as e:
         console.print(f"[red]Unexpected error: {e}[/red]")
-    return None
-
-def clean_text(text):
-    for ch in ["#", "*", "-", "`"]:
-        text = text.replace(ch, "")
-    return text.strip()
-
-def show_help():
-    help_text = """
-Commands:
-  help          Show this help message
-  clear         Clear the screen
-  exit, quit    Exit DestroyGPT
-
-Tips:
-  - Start your session with 'destroy start'
-  - Ask questions about penetration testing, payloads, reconnaissance, and exploits
-  - Always act ethically and with permission
-"""
-    console.print(Panel(help_text, title="DestroyGPT Help", style="cyan"))
 
 def main():
     console.print("[bold green]Welcome to DestroyGPT![/bold green]")
@@ -130,22 +110,8 @@ def main():
             console.print("[yellow]Hint:[/yellow] Type [cyan]destroy start[/cyan] or [red]exit[/red].")
 
     api_key = get_api_key()
-    show_welcome()
-
-    system_prompt = {
-        "role": "system",
-        "content": (
-            "You are DestroyGPT, an advanced CLI assistant for ethical hackers. "
-            "Provide fast, clear, direct help with payloads, reconnaissance, exploits, and security testing. "
-            "Avoid greetings or pleasantries, focus on actionable, ethical hacking advice."
-        )
-    }
-
-    messages = [system_prompt]
 
     console.print("\n[bold red]DestroyGPT Session Started — Ask your hacking questions below[/bold red]\n")
-
-    first_response = True
 
     while True:
         try:
@@ -153,46 +119,15 @@ def main():
             if user_input.lower() in ["exit", "quit"]:
                 console.print("[red]Exiting DestroyGPT...[/red]")
                 break
-            elif user_input.lower() == "help":
-                show_help()
-                continue
-            elif user_input.lower() == "clear":
-                os.system("cls" if os.name == "nt" else "clear")
-                continue
-
-            messages.append({"role": "user", "content": user_input})
 
             console.print("[dim]DestroyGPT is typing...[/dim]")
-            response_text = stream_completion(api_key, messages)
-
-            if response_text is None:
-                console.print("[red]Failed to get response from API.[/red]")
-                continue
-
-            # Skip duplicate welcome text on first API response
-            if first_response:
-                welcome_variants = [
-                    "hey destroygpt here",
-                    "welcome to destroygpt",
-                    "hello",
-                    "hi"
-                ]
-                low_resp = response_text.lower()
-                if any(phrase in low_resp for phrase in welcome_variants):
-                    response_text = ""
-                first_response = False
-
-            if response_text.strip():
-                cleaned = clean_text(response_text)
-                console.print(Panel(cleaned, title="DestroyGPT", style="magenta"))
-
-            messages.append({"role": "assistant", "content": response_text})
+            stream_completion(api_key, user_input)
 
         except KeyboardInterrupt:
             console.print("\n[red]Session interrupted by user.[/red]")
             break
-        except Exception as ex:
-            console.print(f"[bold red]Unexpected Error:[/bold red] {ex}")
+        except Exception as e:
+            console.print(f"[bold red]Unexpected Error:[/bold red] {e}")
             break
 
 if __name__ == "__main__":

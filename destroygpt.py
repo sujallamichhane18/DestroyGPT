@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 import json
 import requests
 from rich.console import Console
@@ -76,7 +75,6 @@ def stream_completion(api_key, user_prompt, model="deepseek/deepseek-r1-0528:fre
                 console.print(f"[red]API Error {response.status_code}: {response.text}[/red]")
                 return
 
-            buffer = ""
             for line in response.iter_lines(decode_unicode=True):
                 if line and line.startswith("data: "):
                     data_str = line[len("data: "):]
@@ -85,7 +83,9 @@ def stream_completion(api_key, user_prompt, model="deepseek/deepseek-r1-0528:fre
                     try:
                         data_json = json.loads(data_str)
                         delta = data_json["choices"][0]["delta"].get("content", "")
-                        print(delta, end="", flush=True)
+                        # Clean markdown chars on the fly:
+                        cleaned_delta = delta.replace("#", "").replace("*", "").replace("`", "").replace("_", "")
+                        print(cleaned_delta, end="", flush=True)
                     except Exception:
                         continue
             print()

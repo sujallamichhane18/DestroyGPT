@@ -26,18 +26,33 @@ Built on [OpenRouter](https://openrouter.ai), it helps you generate payloads, pe
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/sujallamichhane18/DestroyerGPT
+1. git clone https://github.com/sujallamichhane18/DestroyerGPT
 cd destroyGPT
-2. Install dependencies
+2. Create the virtual environment (named .venv)
+python -m venv .venv
+✅ This will create a folder .venv/ containing your isolated Python environment.
+3. Activate the virtual environment
+On Linux/macOS
+
+source .venv/bin/activate
+On Windows (CMD)
+cmd
+
+.venv\Scripts\activate
+On Windows (PowerShell)
+powershell
+
+.\.venv\Scripts\Activate.ps1
+4. Install dependencies
 
 pip install -r requirements.txt
 Or manually:
 
 
 pip install requests rich
-3. Run DestroyGPT
+5. Run DestroyGPT
 
-python destroygpt.py
+python3 destroygpt.py
 
 🔑 First-Time API Key Setup
 DestroyGPT uses your OpenRouter API Key to make model requests.

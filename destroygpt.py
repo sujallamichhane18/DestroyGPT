@@ -1,18 +1,23 @@
 import os
 import sys
 import time
-from openai import OpenAI
+import json
+import requests
 from rich.console import Console
 from rich.prompt import Prompt
+from rich.syntax import Syntax
+from rich.panel import Panel
+from rich.text import Text
 
 console = Console()
 API_KEY_FILE = os.path.expanduser("~/.destroygpt_api_key")
+API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 def save_api_key_securely(api_key):
     try:
         with open(API_KEY_FILE, "w") as f:
             f.write(api_key)
-        os.chmod(API_KEY_FILE, 0o600)  # Owner read/write only
+        os.chmod(API_KEY_FILE, 0o600)
     except Exception as e:
         console.print(f"[red]Failed to save API key securely: {e}[/red]")
 
@@ -26,18 +31,11 @@ def load_api_key():
     return None
 
 def get_api_key():
-    # Try environment variable first
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    api_key = os.getenv("OPENROUTER_API_KEY") or load_api_key()
     if api_key:
         return api_key.strip()
 
-    # Then try saved file
-    api_key = load_api_key()
-    if api_key:
-        return api_key
-
-    # Otherwise ask user
-    console.print("[bold yellow]Enter your OpenRouter API Key (it will be hidden):[/bold yellow]")
+    console.print("[bold yellow]Enter your OpenRouter API Key (hidden):[/bold yellow]")
     try:
         import getpass
         api_key = getpass.getpass("API Key: ").strip()
@@ -48,55 +46,69 @@ def get_api_key():
         console.print("[bold red]API Key is required. Exiting.[/bold red]")
         sys.exit(1)
 
-    # Save key securely for next time
     save_api_key_securely(api_key)
     return api_key
 
-def typewriter(text, delay=0.01):
-    for char in text:
-        print(char, end='', flush=True)
-        time.sleep(delay)
-    print()
+def stream_completion(api_key, messages, model="deepseek/deepseek-r1-0528:free"):
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://destroygpt.cli",
+        "X-Title": "DestroyGPT CLI Assistant"
+    }
 
-def init_client(api_key):
-    return OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=api_key,
-    )
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True
+    }
 
-def ask_destroygpt(client, user_prompt):
     try:
-        response = client.chat.completions.create(
-            model="deepseek/deepseek-r1-0528:free",
-            extra_headers={
-                "HTTP-Referer": "https://destroygpt.cli",
-                "X-Title": "DestroyGPT CLI Assistant"
-            },
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are DestroyGPT, a CLI assistant for ethical hackers. "
-                        "Assist users with penetration testing, payload generation, reconnaissance, "
-                        "and exploit commands in a responsible and ethical manner. "
-                        "Provide clear, minimal, and direct answers without markdown or symbols."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ]
-        )
-        answer = response.choices[0].message.content.strip()
+        with requests.post(API_URL, headers=headers, json=payload, stream=True, timeout=60) as response:
+            if response.status_code != 200:
+                console.print(f"[red]API Error {response.status_code}: {response.text}[/red]")
+                return None
 
-        # Basic cleanup of markdown-like chars
-        for ch in ["#", "*", "-", "`"]:
-            answer = answer.replace(ch, "")
+            collected = []
+            for line in response.iter_lines(decode_unicode=True):
+                if line and line.startswith("data: "):
+                    data_str = line[len("data: "):]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        data_json = json.loads(data_str)
+                        delta = data_json["choices"][0]["delta"].get("content", "")
+                        print(delta, end="", flush=True)
+                        collected.append(delta)
+                    except Exception:
+                        continue
+            print()
+            return "".join(collected).strip()
 
-        return answer.strip()
+    except requests.exceptions.RequestException as e:
+        console.print(f"[red]Request error: {e}[/red]")
     except Exception as e:
-        return f"[!] API Error: {e}"
+        console.print(f"[red]Unexpected error: {e}[/red]")
+    return None
+
+def clean_text(text):
+    # Remove markdown symbols for clean output
+    for ch in ["#", "*", "-", "`"]:
+        text = text.replace(ch, "")
+    return text.strip()
+
+def show_help():
+    help_text = """
+    Commands:
+      help          Show this help message
+      clear         Clear the screen
+      exit, quit    Exit DestroyGPT
+    Tips:
+      - Start your session with 'destroy start'
+      - Ask questions about penetration testing, payloads, reconnaissance, and exploits
+      - Always act ethically and with permission
+    """
+    console.print(Panel(help_text, title="DestroyGPT Help", style="cyan"))
 
 def main():
     console.print("[bold green]Welcome to DestroyGPT![/bold green]")
@@ -110,10 +122,20 @@ def main():
             console.print("[red]Goodbye.[/red]")
             sys.exit(0)
         else:
-            console.print("[yellow]Hint:[/yellow] Type [cyan]destroy start[/cyan] to begin or [red]exit[/red] to quit.")
+            console.print("[yellow]Hint:[/yellow] Type [cyan]destroy start[/cyan] or [red]exit[/red].")
 
     api_key = get_api_key()
-    client = init_client(api_key)
+
+    system_prompt = {
+        "role": "system",
+        "content": (
+            "You are DestroyGPT, an advanced CLI assistant for ethical hackers. "
+            "Provide fast, clear, and direct help on penetration testing, payloads, reconnaissance, "
+            "and exploit commands. Avoid markdown and keep output concise and useful."
+        )
+    }
+
+    messages = [system_prompt]
 
     console.print("\n[bold red]DestroyGPT Session Started — Ask your hacking questions below[/bold red]\n")
 
@@ -123,10 +145,26 @@ def main():
             if user_input.lower() in ["exit", "quit"]:
                 console.print("[red]Exiting DestroyGPT...[/red]")
                 break
+            elif user_input.lower() == "help":
+                show_help()
+                continue
+            elif user_input.lower() == "clear":
+                os.system("cls" if os.name == "nt" else "clear")
+                continue
+
+            messages.append({"role": "user", "content": user_input})
 
             console.print("[dim]DestroyGPT is typing...[/dim]")
-            reply = ask_destroygpt(client, user_input)
-            typewriter(reply)
+            response_text = stream_completion(api_key, messages)
+
+            if response_text is None:
+                console.print("[red]Failed to get response from API.[/red]")
+                continue
+
+            cleaned = clean_text(response_text)
+            console.print(Panel(cleaned, title="DestroyGPT", style="magenta"))
+
+            messages.append({"role": "assistant", "content": response_text})
 
         except KeyboardInterrupt:
             console.print("\n[red]Session interrupted by user.[/red]")

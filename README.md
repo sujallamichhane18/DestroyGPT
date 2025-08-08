@@ -29,20 +29,14 @@ Built on [OpenRouter](https://openrouter.ai), it helps you generate payloads, pe
 git clone https://github.com/yourusername/destroygpt.git
 cd destroygpt
 2. Install dependencies
-bash
-Copy
-Edit
+
 pip install -r requirements.txt
 Or manually:
 
-bash
-Copy
-Edit
+
 pip install requests rich
 3. Run DestroyGPT
-bash
-Copy
-Edit
+
 python destroygpt.py
 🔑 First-Time API Key Setup
 DestroyGPT uses your OpenRouter API Key to make model requests.
@@ -53,28 +47,23 @@ It will be stored securely in: ~/.destroygpt_api_key (chmod 600)
 
 You can also export it directly in the terminal:
 
-bash
-Copy
-Edit
+
 export OPENROUTER_API_KEY="your_api_key"
 🔒 Your API key is hidden and never exposed.
 
 🧪 Example Prompts
-bash
-Copy
-Edit
+
 DestroyGPT >>> generate metasploit payload for android
 DestroyGPT >>> what’s the nmap scan to detect open SMB ports
 DestroyGPT >>> bash script to brute force login on FTP
 DestroyGPT >>> how to exploit CVE-2021-3156
 📁 File Structure
-bash
-Copy
-Edit
+
 destroygpt/
 ├── destroygpt.py          # Main CLI code
 ├── requirements.txt       # Python dependencies
 └── README.md              # You're here
+
 ⚠️ Disclaimer
 This tool is intended for educational and ethical use only.
 The author is not responsible for any misuse.

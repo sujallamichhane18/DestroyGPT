@@ -26,7 +26,7 @@ Built on [OpenRouter](https://openrouter.ai), it helps you generate payloads, pe
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/yourusername/destroygpt.git
+git clone https://github.com/sujallamichhane18/DestroyerGPT
 cd destroygpt
 2. Install dependencies
 

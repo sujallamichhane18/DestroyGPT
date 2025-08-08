@@ -12,9 +12,10 @@ Built on [OpenRouter](https://openrouter.ai), it helps you generate payloads, pe
 
 ## ✨ Features
 
-- 🧠 Powered by OpenRouter LLMs (e.g., DeepSeek, GPT-4o, etc.)
+- 🧠 Powered by OpenRouter LLMs (e.g., DeepSeek: R1 0528 (free) , GPT-4o, etc.)
 - ⚡ Fast & minimal streaming responses
 - 🔐 API Key stored securely at `~/.destroygpt_api_key`
+- For API : https://openrouter.ai/deepseek/deepseek-r1-0528:free
 - 🧼 Cleans messy Markdown from AI output
 - 📟 CLI-based real-time chat with ethical hacking focus
 - 🎯 No BS — payloads, tactics, tools, and recon in one-liners

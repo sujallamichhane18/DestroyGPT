@@ -9,7 +9,6 @@ console = Console()
 API_KEY_FILE = os.path.expanduser("~/.destroygpt_api_key")
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-
 def save_api_key_securely(api_key):
     try:
         with open(API_KEY_FILE, "w") as f:
@@ -17,7 +16,6 @@ def save_api_key_securely(api_key):
         os.chmod(API_KEY_FILE, 0o600)
     except Exception as e:
         console.print(f"[red]Failed to save API key securely: {e}[/red]")
-
 
 def load_api_key():
     if os.path.isfile(API_KEY_FILE):
@@ -27,7 +25,6 @@ def load_api_key():
         except Exception as e:
             console.print(f"[red]Failed to load saved API key: {e}[/red]")
     return None
-
 
 def get_api_key():
     api_key = os.getenv("OPENROUTER_API_KEY") or load_api_key()
@@ -48,8 +45,7 @@ def get_api_key():
     save_api_key_securely(api_key)
     return api_key
 
-
-def stream_completion(api_key, user_prompt, model="deepseek/deepseek-coder:free"):
+def stream_completion(api_key, user_prompt, model="deepseek/deepseek-r1-0528:free"):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -64,8 +60,8 @@ def stream_completion(api_key, user_prompt, model="deepseek/deepseek-coder:free"
                 "role": "system",
                 "content": (
                     "You are DestroyGPT, a CLI assistant for ethical hackers. "
-                    "Provide fast, minimal, and direct help with payloads, recon, exploits, and penetration testing. "
-                    "Always respond ethically and with technical precision."
+                    "Provide fast, clear, minimal, and direct help with penetration testing, payloads, "
+                    "reconnaissance, and exploits — always ethical."
                 )
             },
             {"role": "user", "content": user_prompt}
@@ -87,8 +83,9 @@ def stream_completion(api_key, user_prompt, model="deepseek/deepseek-coder:free"
                     try:
                         data_json = json.loads(data_str)
                         delta = data_json["choices"][0]["delta"].get("content", "")
-                        cleaned = delta.replace("#", "").replace("*", "").replace("`", "").replace("_", "")
-                        print(cleaned, end="", flush=True)
+                        # Clean markdown chars on the fly:
+                        cleaned_delta = delta.replace("#", "").replace("*", "").replace("", "").replace("_", "")
+                        print(cleaned_delta, end="", flush=True)
                     except Exception:
                         continue
             print()
@@ -98,9 +95,8 @@ def stream_completion(api_key, user_prompt, model="deepseek/deepseek-coder:free"
     except Exception as e:
         console.print(f"[red]Unexpected error: {e}[/red]")
 
-
 def main():
-    console.print("[bold green]DestroyGPT CLI - Ethical Hacking Assistant[/bold green]")
+    console.print("[bold green]Welcome to DestroyGPT![/bold green]")
     console.print("Type [bold yellow]destroy start[/bold yellow] to begin or [red]exit[/red] to quit.\n")
 
     while True:
@@ -134,6 +130,5 @@ def main():
             console.print(f"[bold red]Unexpected Error:[/bold red] {e}")
             break
 
-
 if __name__ == "__main__":
-    main()
+    main() 

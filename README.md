@@ -31,28 +31,17 @@ cd destroyGPT
 2. Create the virtual environment (named .venv)
 python -m venv .venv
 ✅ This will create a folder .venv/ containing your isolated Python environment.
+
 3. Activate the virtual environment
-On Linux/macOS
+On Linux/macOS: source .venv/bin/activate
+On Windows (CMD):  .venv\Scripts\activate
+On Windows (PowerShell): .\.venv\Scripts\Activate.ps1
 
-source .venv/bin/activate
-On Windows (CMD)
-cmd
-
-.venv\Scripts\activate
-On Windows (PowerShell)
-powershell
-
-.\.venv\Scripts\Activate.ps1
 4. Install dependencies
-
 pip install -r requirements.txt
-Or manually:
+Or manually: pip install requests rich
 
-
-pip install requests rich
-5. Run DestroyGPT
-
-python3 destroygpt.py
+5. Run DestroyGPT : python3 destroygpt.py
 
 🔑 First-Time API Key Setup
 DestroyGPT uses your OpenRouter API Key to make model requests.

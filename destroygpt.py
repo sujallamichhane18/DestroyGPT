@@ -6,49 +6,68 @@ from rich.console import Console
 from rich.prompt import Prompt
 
 console = Console()
+API_KEY_FILE = os.path.expanduser("~/.destroygpt_api_key")
 
-# -------------------------
-# Utility: simulate typing
-# -------------------------
-def typewriter(text, delay=0.015):
+def save_api_key_securely(api_key):
+    try:
+        with open(API_KEY_FILE, "w") as f:
+            f.write(api_key)
+        os.chmod(API_KEY_FILE, 0o600)  # Owner read/write only
+    except Exception as e:
+        console.print(f"[red]Failed to save API key securely: {e}[/red]")
+
+def load_api_key():
+    if os.path.isfile(API_KEY_FILE):
+        try:
+            with open(API_KEY_FILE, "r") as f:
+                return f.read().strip()
+        except Exception as e:
+            console.print(f"[red]Failed to load saved API key: {e}[/red]")
+    return None
+
+def get_api_key():
+    # Try environment variable first
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if api_key:
+        return api_key.strip()
+
+    # Then try saved file
+    api_key = load_api_key()
+    if api_key:
+        return api_key
+
+    # Otherwise ask user
+    console.print("[bold yellow]Enter your OpenRouter API Key (it will be hidden):[/bold yellow]")
+    try:
+        import getpass
+        api_key = getpass.getpass("API Key: ").strip()
+    except Exception:
+        api_key = Prompt.ask("[bold green]Paste API Key[/bold green]").strip()
+
+    if not api_key:
+        console.print("[bold red]API Key is required. Exiting.[/bold red]")
+        sys.exit(1)
+
+    # Save key securely for next time
+    save_api_key_securely(api_key)
+    return api_key
+
+def typewriter(text, delay=0.01):
     for char in text:
         print(char, end='', flush=True)
         time.sleep(delay)
     print()
 
-# -------------------------
-# Ask for OpenRouter API Key
-# -------------------------
-def get_api_key():
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        console.print("[bold yellow]Enter your OpenRouter API Key (it will be hidden):[/bold yellow]")
-        try:
-            import getpass
-            api_key = getpass.getpass("API Key: ").strip()
-        except Exception:
-            api_key = Prompt.ask("[bold green]Paste API Key[/bold green]").strip()
-    if not api_key:
-        console.print("[bold red]API Key is required. Exiting.[/bold red]")
-        sys.exit(1)
-    return api_key
-
-# -------------------------
-# Initialize Client
-# -------------------------
 def init_client(api_key):
     return OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=api_key,
     )
 
-# -------------------------
-# Ask DestroyGPT
-# -------------------------
 def ask_destroygpt(client, user_prompt):
     try:
         response = client.chat.completions.create(
-            model="deepseek/deepseek-r1-0528:free",  # <-- FIX: comma added here
+            model="deepseek/deepseek-r1-0528:free",
             extra_headers={
                 "HTTP-Referer": "https://destroygpt.cli",
                 "X-Title": "DestroyGPT CLI Assistant"
@@ -57,8 +76,10 @@ def ask_destroygpt(client, user_prompt):
                 {
                     "role": "system",
                     "content": (
-                        "You are DestroyGPT, a CLI assistant for ethical hackers. Help the user with VAPT, "
-                        "payload generation, reconnaissance techniques, and exploit commands. Always stay ethical."
+                        "You are DestroyGPT, a CLI assistant for ethical hackers. "
+                        "Assist users with penetration testing, payload generation, reconnaissance, "
+                        "and exploit commands in a responsible and ethical manner. "
+                        "Provide clear, minimal, and direct answers without markdown or symbols."
                     )
                 },
                 {
@@ -67,13 +88,16 @@ def ask_destroygpt(client, user_prompt):
                 }
             ]
         )
-        return response.choices[0].message.content.strip()
+        answer = response.choices[0].message.content.strip()
+
+        # Basic cleanup of markdown-like chars
+        for ch in ["#", "*", "-", "`"]:
+            answer = answer.replace(ch, "")
+
+        return answer.strip()
     except Exception as e:
         return f"[!] API Error: {e}"
 
-# -------------------------
-# Main Function
-# -------------------------
 def main():
     console.print("[bold green]Welcome to DestroyGPT![/bold green]")
     console.print("Type [bold yellow]destroy start[/bold yellow] to begin or [red]exit[/red] to quit.\n")
@@ -86,9 +110,8 @@ def main():
             console.print("[red]Goodbye.[/red]")
             sys.exit(0)
         else:
-            console.print("[yellow]Hint:[/yellow] Type [cyan]destroy start[/cyan] to begin.")
+            console.print("[yellow]Hint:[/yellow] Type [cyan]destroy start[/cyan] to begin or [red]exit[/red] to quit.")
 
-    # Start the session
     api_key = get_api_key()
     client = init_client(api_key)
 
@@ -103,9 +126,6 @@ def main():
 
             console.print("[dim]DestroyGPT is typing...[/dim]")
             reply = ask_destroygpt(client, user_input)
-
-            # Fancy typing output
-            console.print("\n[bold magenta]DestroyGPT:[/bold magenta]", end=" ")
             typewriter(reply)
 
         except KeyboardInterrupt:
@@ -115,8 +135,5 @@ def main():
             console.print(f"[bold red]Unexpected Error:[/bold red] {ex}")
             break
 
-# -------------------------
-# Entry Point
-# -------------------------
 if __name__ == "__main__":
     main()

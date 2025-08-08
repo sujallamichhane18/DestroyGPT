@@ -32,7 +32,7 @@ system_prompt = {
 def ask_destroygpt(user_prompt):
     try:
         completion = client.chat.completions.create(
-            model="deepseek/deepseek-coder:free",  # You can change to gpt-4o, claude, etc.
+            model="deepseek-ai/deepseek-coder",  # You can change to gpt-4o, claude, etc.
             extra_headers={
                 "HTTP-Referer": "https://destroygpt.cli",
                 "X-Title": "DestroyGPT CLI Assistant"

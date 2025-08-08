@@ -1,13 +1,11 @@
 import os
 import sys
-import time
 import json
+import time
 import requests
 from rich.console import Console
 from rich.prompt import Prompt
-from rich.syntax import Syntax
 from rich.panel import Panel
-from rich.text import Text
 
 console = Console()
 API_KEY_FILE = os.path.expanduser("~/.destroygpt_api_key")
@@ -48,6 +46,17 @@ def get_api_key():
 
     save_api_key_securely(api_key)
     return api_key
+
+def show_welcome():
+    welcome_text = """\
+Welcome to DestroyGPT, your ethical hacking CLI tool.
+
+usage: <command> [options]
+> Type your query directly for payloads, exploits, recon, or analysis. Keep it terminal-friendly.
+
+Example: show reverse_tcp payloads for linux
+"""
+    console.print(Panel(welcome_text, title="DestroyGPT", border_style="green"))
 
 def stream_completion(api_key, messages, model="deepseek/deepseek-r1-0528:free"):
     headers = {
@@ -92,22 +101,23 @@ def stream_completion(api_key, messages, model="deepseek/deepseek-r1-0528:free")
     return None
 
 def clean_text(text):
-    # Remove markdown symbols for clean output
+    # Remove common markdown symbols for cleaner display
     for ch in ["#", "*", "-", "`"]:
         text = text.replace(ch, "")
     return text.strip()
 
 def show_help():
     help_text = """
-    Commands:
-      help          Show this help message
-      clear         Clear the screen
-      exit, quit    Exit DestroyGPT
-    Tips:
-      - Start your session with 'destroy start'
-      - Ask questions about penetration testing, payloads, reconnaissance, and exploits
-      - Always act ethically and with permission
-    """
+Commands:
+  help          Show this help message
+  clear         Clear the screen
+  exit, quit    Exit DestroyGPT
+
+Tips:
+  - Start your session with 'destroy start'
+  - Ask questions about penetration testing, payloads, reconnaissance, and exploits
+  - Always act ethically and with permission
+"""
     console.print(Panel(help_text, title="DestroyGPT Help", style="cyan"))
 
 def main():
@@ -125,6 +135,7 @@ def main():
             console.print("[yellow]Hint:[/yellow] Type [cyan]destroy start[/cyan] or [red]exit[/red].")
 
     api_key = get_api_key()
+    show_welcome()
 
     system_prompt = {
         "role": "system",

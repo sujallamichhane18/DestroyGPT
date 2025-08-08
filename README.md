@@ -1,4 +1,3 @@
-Absolutely! Here's the `README.md` written in **GitHub Markdown format**, ready to be placed in your repo root:
 
 ---
 

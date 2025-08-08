@@ -27,7 +27,7 @@ Built on [OpenRouter](https://openrouter.ai), it helps you generate payloads, pe
 
 ```bash
 git clone https://github.com/sujallamichhane18/DestroyerGPT
-cd destroygpt
+cd destroyGPT
 2. Install dependencies
 
 pip install -r requirements.txt
@@ -38,6 +38,7 @@ pip install requests rich
 3. Run DestroyGPT
 
 python destroygpt.py
+
 🔑 First-Time API Key Setup
 DestroyGPT uses your OpenRouter API Key to make model requests.
 
@@ -73,5 +74,5 @@ Never use DestroyGPT to target or harm systems without explicit permission.
 This project is licensed under the MIT License.
 
 👤 Author
-Built with ❤️ by Sujal Lamichhane
+Built with ❤️ by Sujal Lamichhane by using AI.
 If you like it, give it a ⭐️!

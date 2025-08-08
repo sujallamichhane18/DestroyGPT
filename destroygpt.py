@@ -49,12 +49,8 @@ def get_api_key():
 
 def show_welcome():
     welcome_text = """\
-Welcome to DestroyGPT, your ethical hacking CLI tool.
-
-usage: <command> [options]
-> Type your query directly for payloads, exploits, recon, or analysis. Keep it terminal-friendly.
-
-Example: show reverse_tcp payloads for linux
+Hey. DestroyGPT here.  
+What do you need? Drop a command, payload, or recon tactic — be specific. Let's hack (ethically).
 """
     console.print(Panel(welcome_text, title="DestroyGPT", border_style="green"))
 
@@ -101,7 +97,6 @@ def stream_completion(api_key, messages, model="deepseek/deepseek-r1-0528:free")
     return None
 
 def clean_text(text):
-    # Remove common markdown symbols for cleaner display
     for ch in ["#", "*", "-", "`"]:
         text = text.replace(ch, "")
     return text.strip()
@@ -141,14 +136,16 @@ def main():
         "role": "system",
         "content": (
             "You are DestroyGPT, an advanced CLI assistant for ethical hackers. "
-            "Provide fast, clear, and direct help on penetration testing, payloads, reconnaissance, "
-            "and exploit commands. Avoid markdown and keep output concise and useful."
+            "Provide fast, clear, direct help with payloads, reconnaissance, exploits, and security testing. "
+            "Avoid greetings or pleasantries, focus on actionable, ethical hacking advice."
         )
     }
 
     messages = [system_prompt]
 
     console.print("\n[bold red]DestroyGPT Session Started — Ask your hacking questions below[/bold red]\n")
+
+    first_response = True
 
     while True:
         try:
@@ -172,8 +169,22 @@ def main():
                 console.print("[red]Failed to get response from API.[/red]")
                 continue
 
-            cleaned = clean_text(response_text)
-            console.print(Panel(cleaned, title="DestroyGPT", style="magenta"))
+            # Skip duplicate welcome text on first API response
+            if first_response:
+                welcome_variants = [
+                    "hey destroygpt here",
+                    "welcome to destroygpt",
+                    "hello",
+                    "hi"
+                ]
+                low_resp = response_text.lower()
+                if any(phrase in low_resp for phrase in welcome_variants):
+                    response_text = ""
+                first_response = False
+
+            if response_text.strip():
+                cleaned = clean_text(response_text)
+                console.print(Panel(cleaned, title="DestroyGPT", style="magenta"))
 
             messages.append({"role": "assistant", "content": response_text})
 

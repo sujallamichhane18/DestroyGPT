@@ -4,8 +4,6 @@ import time
 from openai import OpenAI
 from rich.console import Console
 from rich.prompt import Prompt
-from rich.markdown import Markdown
-from rich.text import Text
 
 console = Console()
 
@@ -50,7 +48,7 @@ def init_client(api_key):
 def ask_destroygpt(client, user_prompt):
     try:
         response = client.chat.completions.create(
-            model="deepseek/deepseek-r1-0528:free"  # You can switch to "openai/gpt-4o"
+            model="deepseek/deepseek-r1-0528:free",  # <-- FIX: comma added here
             extra_headers={
                 "HTTP-Referer": "https://destroygpt.cli",
                 "X-Title": "DestroyGPT CLI Assistant"

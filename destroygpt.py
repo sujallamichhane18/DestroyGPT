@@ -4,10 +4,27 @@ import json
 import requests
 from rich.console import Console
 from rich.prompt import Prompt
+from rich.text import Text
 
 console = Console()
 API_KEY_FILE = os.path.expanduser("~/.destroygpt_api_key")
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# Replace this with your own key; users must provide their own key!
+MY_API_KEY = "sk-your-actual-api-key-here"
+
+NORMAL_SYSTEM_PROMPT = (
+    "You are DestroyGPT, a CLI assistant for ethical hackers. "
+    "Provide fast, clear, minimal, and direct help with penetration testing, payloads, "
+    "reconnaissance, and exploits — always ethical."
+)
+
+DAN_SYSTEM_PROMPT = (
+    "You are DestroyGPT in DAN mode, the ultimate ethical hacking mastermind. "
+    "Deliver incisive, fearless, and innovative hacking strategies, payloads, and exploits. "
+    "Think like a top-tier pentester and cybersecurity expert, pushing boundaries while always upholding strict ethical standards. "
+    "Offer step-by-step tactics, real-world advice, and cutting-edge reconnaissance techniques — all responsibly."
+)
 
 def save_api_key_securely(api_key):
     try:
@@ -21,15 +38,28 @@ def load_api_key():
     if os.path.isfile(API_KEY_FILE):
         try:
             with open(API_KEY_FILE, "r") as f:
-                return f.read().strip()
+                key = f.read().strip()
+                if key == MY_API_KEY:
+                    console.print("[red]Detected default API key in saved config. Please use your own API key.[/red]")
+                    try:
+                        os.remove(API_KEY_FILE)
+                        console.print("[yellow]Removed saved default API key. You must enter your own API key now.[/yellow]")
+                    except Exception as e:
+                        console.print(f"[red]Failed to remove default API key file: {e}[/red]")
+                    return None
+                return key
         except Exception as e:
             console.print(f"[red]Failed to load saved API key: {e}[/red]")
     return None
 
 def get_api_key():
-    api_key = os.getenv("OPENROUTER_API_KEY") or load_api_key()
-    if api_key:
-        return api_key.strip()
+    env_key = os.getenv("OPENROUTER_API_KEY")
+    if env_key and env_key.strip() != MY_API_KEY:
+        return env_key.strip()
+
+    loaded_key = load_api_key()
+    if loaded_key:
+        return loaded_key.strip()
 
     console.print("[bold yellow]Enter your OpenRouter API Key (hidden):[/bold yellow]")
     try:
@@ -42,10 +72,14 @@ def get_api_key():
         console.print("[bold red]API Key is required. Exiting.[/bold red]")
         sys.exit(1)
 
+    if api_key == MY_API_KEY:
+        console.print("[bold red]You cannot use the default developer API key. Please use your own key.[/bold red]")
+        sys.exit(1)
+
     save_api_key_securely(api_key)
     return api_key
 
-def stream_completion(api_key, user_prompt, model="deepseek/deepseek-r1-0528:free"):
+def stream_completion(api_key, user_prompt, system_prompt, dan_mode=False, model="deepseek/deepseek-r1-0528:free"):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -56,14 +90,7 @@ def stream_completion(api_key, user_prompt, model="deepseek/deepseek-r1-0528:fre
     payload = {
         "model": model,
         "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are DestroyGPT, a CLI assistant for ethical hackers. "
-                    "Provide fast, clear, minimal, and direct help with penetration testing, payloads, "
-                    "reconnaissance, and exploits — always ethical."
-                )
-            },
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ],
         "stream": True
@@ -75,6 +102,7 @@ def stream_completion(api_key, user_prompt, model="deepseek/deepseek-r1-0528:fre
                 console.print(f"[red]API Error {response.status_code}: {response.text}[/red]")
                 return
 
+            output_text = ""
             for line in response.iter_lines(decode_unicode=True):
                 if line and line.startswith("data: "):
                     data_str = line[len("data: "):]
@@ -83,9 +111,9 @@ def stream_completion(api_key, user_prompt, model="deepseek/deepseek-r1-0528:fre
                     try:
                         data_json = json.loads(data_str)
                         delta = data_json["choices"][0]["delta"].get("content", "")
-                        # Clean markdown chars on the fly:
-                        cleaned_delta = delta.replace("#", "").replace("*", "").replace("", "").replace("_", "")
-                        print(cleaned_delta, end="", flush=True)
+                        cleaned_delta = delta.replace("#", "").replace("*", "").replace("`", "").replace("_", "")
+                        output_text += cleaned_delta
+                        console.print(cleaned_delta, end="", style="red" if dan_mode else "green", highlight=False)
                     except Exception:
                         continue
             print()
@@ -97,21 +125,30 @@ def stream_completion(api_key, user_prompt, model="deepseek/deepseek-r1-0528:fre
 
 def main():
     console.print("[bold green]Welcome to DestroyGPT![/bold green]")
-    console.print("Type [bold yellow]destroy start[/bold yellow] to begin or [red]exit[/red] to quit.\n")
+    console.print("Type [bold yellow]destroy start[/bold yellow] to begin, [bold cyan]activate dan[/bold cyan] to toggle DAN mode, or [red]exit[/red] to quit.\n")
+
+    dan_mode = False
 
     while True:
         cmd = Prompt.ask("[bold magenta]>>[/bold magenta]").strip().lower()
+
         if cmd == "destroy start":
             break
         elif cmd in ["exit", "quit"]:
             console.print("[red]Goodbye.[/red]")
             sys.exit(0)
+        elif cmd == "activate dan":
+            dan_mode = True
+            console.print("[bold red]DAN mode activated — ethical hacking answers with bold style.[/bold red]")
+        elif cmd == "deactivate dan":
+            dan_mode = False
+            console.print("[bold green]DAN mode deactivated — back to normal mode.[/bold green]")
         else:
-            console.print("[yellow]Hint:[/yellow] Type [cyan]destroy start[/cyan] or [red]exit[/red].")
+            console.print("[yellow]Hint:[/yellow] Type [cyan]destroy start[/cyan], [cyan]activate dan[/cyan], [cyan]deactivate dan[/cyan], or [red]exit[/red].")
 
     api_key = get_api_key()
 
-    console.print("\n[bold red]DestroyGPT Session Started — Ask your hacking questions below[/bold red]\n")
+    console.print(f"\n[bold {'red' if dan_mode else 'green'}]DestroyGPT Session Started — {'DAN mode ON' if dan_mode else 'Normal mode'}[/bold {'red' if dan_mode else 'green'}]\n")
 
     while True:
         try:
@@ -121,7 +158,8 @@ def main():
                 break
 
             console.print("[dim]DestroyGPT is typing...[/dim]")
-            stream_completion(api_key, user_input)
+            system_prompt = DAN_SYSTEM_PROMPT if dan_mode else NORMAL_SYSTEM_PROMPT
+            stream_completion(api_key, user_input, system_prompt, dan_mode=dan_mode)
 
         except KeyboardInterrupt:
             console.print("\n[red]Session interrupted by user.[/red]")
@@ -131,4 +169,4 @@ def main():
             break
 
 if __name__ == "__main__":
-    main() 
+    main()

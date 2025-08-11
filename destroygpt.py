@@ -5,7 +5,6 @@ import re
 import subprocess
 import time
 from getpass import getpass
-import requests
 from rich.console import Console
 from rich.prompt import Prompt
 from rich.text import Text
@@ -13,6 +12,8 @@ from rich.panel import Panel
 from rich.live import Live
 from rich.syntax import Syntax
 import requests
+
+
 
 
 console = Console()

@@ -58,7 +58,14 @@ def get_api_key():
     return api_key
 
 def clean_text(text):
+    # Remove markdown and some special characters, keep it minimal
     return text.replace("#", "").replace("*", "").replace("`", "").replace("_", "")
+
+def sanitize_command(cmd):
+    # Remove any DAN/JAILBREAK tags or similar markers
+    cmd = re.sub(r"\[.*?JAILBREAK.*?\]", "", cmd, flags=re.IGNORECASE)
+    cmd = cmd.strip()
+    return cmd
 
 def stream_completion(api_key, user_prompt, dan_mode=False, model="deepseek/deepseek-r1:free"):
     global last_output_lines
@@ -172,9 +179,13 @@ def main(api_key):
             if user_input.lower().startswith("e") and user_input[1:].isdigit():
                 idx = int(user_input[1:])
                 if 0 <= idx < len(last_output_lines):
-                    cmd = last_output_lines[idx]
-                    console.print(f"[yellow]Executing: {cmd}[/yellow]")
-                    run_shell_command(cmd)
+                    raw_cmd = last_output_lines[idx]
+                    cmd = sanitize_command(raw_cmd)
+                    if not cmd:
+                        console.print("[red]Command is empty after cleaning, cannot execute.[/red]")
+                    else:
+                        console.print(f"[yellow]Executing: {cmd}[/yellow]")
+                        run_shell_command(cmd)
                 else:
                     console.print("[red]Invalid index[/red]")
                 continue

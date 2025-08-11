@@ -230,6 +230,28 @@ def stream_completion(api_key, user_prompt, dan_mode=False, model="deepseek/deep
         console.print(f"[red]Unexpected error: {e}[/red]")
         return False
 
+# ========== Multiline command grouping ==========
+
+def group_multiline_commands(lines):
+    """
+    Join lines with trailing backslash \ to form one full command.
+    Returns list of complete commands.
+    """
+    grouped = []
+    buffer = []
+    for line in lines:
+        stripped = line.rstrip()
+        if stripped.endswith("\\"):
+            buffer.append(stripped[:-1].rstrip())
+        else:
+            buffer.append(stripped)
+            grouped.append(" ".join(buffer))
+            buffer = []
+    if buffer:
+        # Append any leftover lines without trailing backslash
+        grouped.append(" ".join(buffer))
+    return grouped
+
 # ========== Command Execution ==========
 
 def run_shell_command(command):
@@ -298,36 +320,39 @@ def confirm_execute_commands(cmds):
     return confirm == "y"
 
 def execute_commands(indices, last_output_lines):
-    to_run = []
+    # Extract chosen lines
+    chosen_lines = []
     for idx in indices:
         if 0 <= idx < len(last_output_lines):
-            raw_cmd = last_output_lines[idx]
-            cmd = sanitize_command(raw_cmd)
-            if cmd:
-                to_run.append((idx, cmd))
-            else:
-                console.print(f"[red]Line {idx} is empty after cleaning. Skipping.[/red]")
+            chosen_lines.append(last_output_lines[idx])
         else:
             console.print(f"[red]Index {idx} out of range. Skipping.[/red]")
 
-    if not to_run:
-        console.print("[yellow]No commands to execute after filtering.[/yellow]")
+    if not chosen_lines:
+        console.print("[yellow]No valid commands found to execute.[/yellow]")
         return
 
-    if not confirm_execute_commands([cmd for _, cmd in to_run]):
+    # Group multiline commands
+    commands_to_run = group_multiline_commands(chosen_lines)
+
+    if not commands_to_run:
+        console.print("[yellow]No commands after grouping lines.[/yellow]")
+        return
+
+    if not confirm_execute_commands(commands_to_run):
         console.print("[yellow]Execution cancelled.[/yellow]")
         return
 
-    console.print(f"[bold blue]Executing {len(to_run)} command(s) with max parallelism = {MAX_PARALLEL_COMMANDS}[/bold blue]")
+    console.print(f"[bold blue]Executing {len(commands_to_run)} command(s) with max parallelism = {MAX_PARALLEL_COMMANDS}[/bold blue]")
 
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL_COMMANDS) as executor:
-        futures = {executor.submit(run_shell_command, cmd): idx for idx, cmd in to_run}
+        futures = {executor.submit(run_shell_command, cmd): idx for idx, cmd in enumerate(commands_to_run)}
         for future in as_completed(futures):
             idx = futures[future]
             try:
                 future.result()
             except Exception as e:
-                console.print(f"[red]Error executing line {idx}: {e}[/red]")
+                console.print(f"[red]Error executing command #{idx}: {e}[/red]")
 
 def auto_run_prompt(last_output_lines):
     while True:
@@ -404,3 +429,4 @@ def main(api_key):
 if __name__ == "__main__":
     api_key = get_api_key()
     main(api_key)
+

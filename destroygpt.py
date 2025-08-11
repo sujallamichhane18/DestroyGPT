@@ -13,8 +13,9 @@ from rich.panel import Panel
 from rich.live import Live
 from rich.syntax import Syntax
 import requests
-console = Console()
 
+
+console = Console()
 API_KEY_FILE = os.path.expanduser("~/.destroygpt_api_key")
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 HISTORY_FILE = os.path.expanduser("~/.destroygpt_cli_history.json")

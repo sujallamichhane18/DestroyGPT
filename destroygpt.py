@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.prompt import Prompt
 from rich.syntax import Syntax
 from rich.panel import Panel
+import requests
 
 console = Console()
 API_KEY_FILE = os.path.expanduser("~/.destroygpt_api_key")

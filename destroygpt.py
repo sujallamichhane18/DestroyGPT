@@ -1,6 +1,6 @@
 #!/usr/bin/env python3 """ Advanced DestroyGPT CLI (refactor)
 
-Safer command filtering (whitelist + blacklist + pattern checks)
+"""Safer command filtering (whitelist + blacklist + pattern checks)
 
 Optional Docker sandbox execution (if docker available)
 

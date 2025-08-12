@@ -36,7 +36,6 @@ from typing import List, Optional, Tuple
 
 import requests
 from rich.console import Console
-from rich.live import Live
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
@@ -68,15 +67,15 @@ SAFE_COMMANDS = {
 
 # Blacklist patterns (dangerous ops)
 BLACKLIST_PATTERNS = [
-    r"rm\s+-rf\s+/",  # dangerous recursive root deletion
-    r"rm\s+-rf\s+",   # general recursive deletion
-    r":👦👦\s{\s*:|:\s*&\s*};?",  # fork bomb pattern
-    r"dd\s+if=",      # destructive disk writes
-    r"mkfs\.",        # filesystem format
+    r"rm\s+-rf\s+/",
+    r"rm\s+-rf\s+",
+    r":👦👦\s{\s*:|:\s*&\s*};?",  # fork bomb
+    r"dd\s+if=",  # destructive disk writes
+    r"mkfs.",
     r"shutdown\b",
     r"reboot\b",
-    r":>\s*/",        # truncate root files
-    r"chmod\s+0+\s+/", # chmod root to no permissions
+    r":>\s*/",  # truncate root
+    r"chmod\s+0+\s+/",  # chmod root
 ]
 BLACKLIST_REGEX = [re.compile(x, re.IGNORECASE) for x in BLACKLIST_PATTERNS]
 
@@ -269,40 +268,34 @@ def is_safe_command(cmd: str) -> Tuple[bool, List[str]]:
 
 def sanitize_ai_output(raw: str) -> List[str]:
     """
-    Remove markdown fences and backticks from AI output.
-    Returns list of cleaned lines.
+    Remove markdown fences and extra characters from AI output.
+    Returns list of lines containing command strings.
     """
     lines = []
-    in_code_block = False
     for line in raw.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            in_code_block = not in_code_block
-            continue  # skip fence lines
-        if in_code_block:
-            lines.append(stripped)
+        # skip code fences
+        if line.strip().startswith("```") or line.strip().startswith("```"):
             continue
-        # Remove backticks wrapping entire line, e.g. `cmd`
-        if stripped.startswith("`") and stripped.endswith("`") and len(stripped) > 2:
-            stripped = stripped[1:-1].strip()
-        if stripped:
-            lines.append(stripped)
+        # remove leading markdown markers like > or -
+        line = re.sub(r"^\s*[>-]\s*", "", line)
+        if line.strip():
+            lines.append(line.rstrip())
     return lines
 
 
 def filter_command_lines(lines: List[str]) -> List[str]:
     """
-    Accept lines that look like commands, even if wrapped in backticks.
-    Remove any remaining backticks inside lines.
+    Accept only lines that look like commands (basic heuristic).
+    Skip lines with backticks or non-ASCII control characters.
     """
     cmd_lines = []
     for line in lines:
-        clean_line = line.replace("`", "").strip()
-        if not clean_line:
+        stripped = line.strip()
+        if "`" in stripped or any(ord(c) < 32 for c in stripped):
             continue
-        # simple heuristic: starts with sudo, bash, ./, or command-like word
-        if re.match(r"^(sudo\s+|bash\s+|./|[A-Za-z0-9_-]+\b)", clean_line):
-            cmd_lines.append(clean_line)
+        # simple heuristic: line starts with sudo, bash, ./, or alphanumeric command
+        if re.match(r"^(sudo\s+|bash\s+|./|[A-Za-z0-9_-]+\b)", stripped):
+            cmd_lines.append(stripped)
     return cmd_lines
 
 
@@ -361,6 +354,10 @@ def stream_completion(
                 if raw:
                     last_activity = time.time()
                     try:
+                        # FIX: skip printing OPENROUTER PROCESSING noise lines
+                        if raw.strip().startswith(": OPENROUTER PROCESSING"):
+                            continue
+
                         content = parse_streamed_line(raw)
                         if content:
                             out.append(content)
@@ -450,9 +447,9 @@ def interactive_execute(commands: List[str], use_docker: bool, dry_run: bool) ->
 
         code, out, err = run_in_docker_if_available(cmd, use_docker)
         if out:
-            console.print(Panel(Text(out), title="STDOUT", style="green"))
+            console.print(Panel(Text(out), title="STDOUT", style="bright_green"))
         if err:
-            console.print(Panel(Text(err), title="STDERR", style="red"))
+            console.print(Panel(Text(err), title="STDERR", style="bright_red"))
         if code == 0:
             console.print("[bold green]Command completed successfully.[/bold green]")
         elif code > 0:
@@ -522,31 +519,43 @@ def main() -> None:
                 continue
 
             # show commands summary table
-            table = Table(title="Parsed Commands")
+            table = Table(title="Detected Commands")
             table.add_column("#", style="cyan", width=4)
-            table.add_column("Command", style="white")
-
+            table.add_column("Command", style="magenta")
             for i, c in enumerate(grouped):
                 table.add_row(str(i), c)
+            console.print(table)
 
-            console.print(Panel(table, title="Detected Commands", style="red"))
-
-            # Ask user if want to run commands
-            if Confirm.ask("Run these commands?", default=True):
-                interactive_execute(grouped, args.use_docker, args.dry_run)
-            else:
-                console.print("[yellow]Commands skipped.[/yellow]")
-
-            # Save history
-            history.append({"prompt": user_input, "response_raw": raw, "commands": grouped, "timestamp": time.time()})
+            # append to history
+            history.append({"prompt": user_input, "response": grouped, "timestamp": time.time()})
             save_history(history)
+
+            # interactive execution
+            if Confirm.ask("Run these commands?", default=False):
+                indices = Prompt.ask("Enter command indices to run (comma-separated or 'all')", default="all")
+                to_run: List[int] = []
+                if indices.lower() == "all":
+                    to_run = list(range(len(grouped)))
+                else:
+                    try:
+                        for part in indices.split(","):
+                            idx = int(part.strip())
+                            if 0 <= idx < len(grouped):
+                                to_run.append(idx)
+                    except Exception:
+                        console.print("[red]Invalid input, skipping execution.[/red]")
+                        continue
+                cmds_to_execute = [grouped[i] for i in to_run]
+                interactive_execute(cmds_to_execute, args.use_docker, args.dry_run)
+            else:
+                console.print("[cyan]Commands skipped.[/cyan]")
 
         except KeyboardInterrupt:
             console.print("\n[bold red]Interrupted by user. Exiting.[/bold red]")
             break
         except Exception as e:
-            logger.exception("Unexpected error: %s", e)
-            console.print(f"[red]Error: {e}[/red]")
+            console.print(f"[red]Unexpected error: {e}[/red]")
+            logger.exception("Unexpected error in main loop: %s", e)
 
 
 if __name__ == "__main__":

@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """
-Advanced DestroyGPT CLI - Enhanced and Fixed Version
+Advanced DestroyGPT CLI (refactor)
 
-Key Improvements:
-1. Fixed logging import and setup
-2. Enhanced security checks
-3. Better error handling
-4. Improved command validation
-5. Streamlined execution flow
+- Safer command filtering (whitelist + blacklist + pattern checks)
+- Optional Docker sandbox execution (if docker available)
+- Stream-resilient OpenRouter streaming parser
+- Rotating history and logging
+- Dry-run and interactive per-command confirmation
+- Command execution watchdog using communicate(timeout=...)
+- Configurable via argparse and a small config section
+- Keeps compatibility with original features (rich UI, live output)
+
+Notes:
+This tool is intended for ethical, authorized testing only.
+Running arbitrary commands from an LLM is dangerous even with filters.
 """
 
 from __future__ import annotations
@@ -20,18 +26,15 @@ import os
 import re
 import shlex
 import shutil
-import signal
 import subprocess
 import sys
 import time
-from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple
 
 import requests
 from rich.console import Console
-from rich.live import Live
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
@@ -42,454 +45,514 @@ from rich.text import Text
 # -------------------------
 
 APP_NAME = "DestroyGPT-Advanced"
-VERSION = "2.0"
 HOME = Path.home()
-CONFIG_DIR = HOME / ".destroygpt"
-API_KEY_FILE = CONFIG_DIR / "api_key"
-HISTORY_FILE = CONFIG_DIR / "history.json"
-LOG_FILE = CONFIG_DIR / "destroygpt.log"
+API_KEY_FILE = HOME / ".destroygpt_api_key"
+HISTORY_FILE = HOME / ".destroygpt_cli_history.json"
+LOG_FILE = HOME / ".destroygpt_cli.log"
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "deepseek/deepseek-r1:free"
-STREAM_TIMEOUT = 120
-COMMAND_TIMEOUT_SEC = 180
+STREAM_TIMEOUT = 120  # seconds to wait for stream activity before abort
+COMMAND_TIMEOUT_SEC = 180  # per-command timeout (seconds)
 HISTORY_MAX_ENTRIES = 5000
-MAX_COMMAND_LENGTH = 2000
 
-# Initialize logging
-logger = logging.getLogger(APP_NAME)
-
-# Whitelist of allowed commands
+# Whitelist of allowed executable base commands (lowercase)
 SAFE_COMMANDS = {
     "nmap", "masscan", "curl", "wget", "nc", "netcat", "ssh",
     "python", "python3", "bash", "chmod", "chown", "systemctl", "service",
     "ip", "ifconfig", "tcpdump", "dig", "host", "traceroute", "whoami", "id",
     "uname", "cat", "grep", "awk", "sed", "find", "ls", "ps", "kill", "docker",
     "kubectl", "helm", "git", "java", "node", "pip", "pip3", "jq", "openssl",
+    "echo",  # Added for basic commands like hello
 }
 
-# Blacklist patterns
+# Blacklist patterns (dangerous ops)
 BLACKLIST_PATTERNS = [
     r"rm\s+-rf\s+/",
     r"rm\s+-rf\s+",
-    r":\s*\(\s*\)\s*{\s*:\s*|\s*&\s*};?",
-    r"dd\s+if=",
-    r"mkfs\.",
+    r":\(\)\s*{\s*:|:\s*&\s*};?",  # fork bomb
+    r"dd\s+if=",  # destructive disk writes
+    r"mkfs.",
     r"shutdown\b",
     r"reboot\b",
-    r":>\s*/",
-    r"chmod\s+0+\s+/",
+    r":>\s*/",  # truncate root
+    r"chmod\s+0+\s+/",  # chmod root
 ]
 BLACKLIST_REGEX = [re.compile(x, re.IGNORECASE) for x in BLACKLIST_PATTERNS]
 
-# Danger keywords
+# Danger keywords that require manual confirmation if present
 DANGER_KEYWORDS = {
     "rm", "dd", "mkfs", "shutdown", "reboot", "poweroff", "format", "forkbomb"
 }
 
-SYSTEM_PROMPT = (
+DAN_PROMPT = (
     "You are DestroyGPT, an advanced CLI assistant for ethical hackers.\n"
-    "When asked to scan or exploit, reply ONLY with runnable bash commands.\n"
-    "Use sudo where necessary. Commands may be multiline with backslashes (\\)."
+    "When asked to scan or exploit, reply ONLY with runnable bash commands (no explanation, no extra text).\n"
+    "Commands may be multiline with backslashes (\\). Use sudo where necessary."
 )
 
-# Initialize console
 console = Console()
+logger = logging.getLogger(APP_NAME)
 
 # -------------------------
-# Setup Functions
+# Logging & Utilities
 # -------------------------
+
 
 def setup_logging(verbosity: int = 1) -> None:
-    """Configure logging with rotation and proper formatting."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_DIR.chmod(0o700)
-
+    """Setup logging handlers and formatters."""
     logger.setLevel(logging.DEBUG)
-    
-    # File handler with rotation
-    fh = RotatingFileHandler(
-        LOG_FILE,
-        maxBytes=2_000_000,
-        backupCount=3,
-        encoding='utf-8'
-    )
+    fh = RotatingFileHandler(str(LOG_FILE), maxBytes=2_000_000, backupCount=3)
     fh.setLevel(logging.DEBUG)
-    file_formatter = logging.Formatter(
-        "%(asctime)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
-    fh.setFormatter(file_formatter)
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    fh.setFormatter(fmt)
     logger.addHandler(fh)
 
-    # Console handler
-    ch = logging.StreamHandler()
+    ch = logging.StreamHandler(sys.stderr)
     ch.setLevel(logging.WARNING if verbosity < 1 else logging.INFO)
-    console_formatter = logging.Formatter("[%(levelname)s] %(message)s")
-    ch.setFormatter(console_formatter)
+    ch.setFormatter(fmt)
     logger.addHandler(ch)
 
+
 def save_api_key(api_key: str) -> None:
-    """Securely save API key to disk."""
+    """Save API key to disk with restrictive permissions."""
     try:
         API_KEY_FILE.write_text(api_key)
         API_KEY_FILE.chmod(0o600)
-        logger.info("API key saved successfully")
+        logger.info("Saved API key to %s", API_KEY_FILE)
     except Exception as e:
-        logger.error(f"Failed to save API key: {e}")
-        raise
+        logger.exception("Failed to save API key: %s", e)
+
 
 def load_api_key() -> Optional[str]:
-    """Load API key from environment or file."""
-    env_key = os.getenv("OPENROUTER_API_KEY")
-    if env_key:
-        return env_key.strip()
-    
+    """Load API key from env var or file."""
+    env = os.getenv("OPENROUTER_API_KEY")
+    if env:
+        return env.strip()
     if API_KEY_FILE.exists():
         try:
             return API_KEY_FILE.read_text().strip()
-        except Exception as e:
-            logger.error(f"Failed to read API key: {e}")
+        except Exception:
+            return None
+    return None
+
+
+def ensure_history_capacity(hist: List[dict]) -> None:
+    """Trim history to max entries."""
+    if len(hist) > HISTORY_MAX_ENTRIES:
+        excess = len(hist) - HISTORY_MAX_ENTRIES
+        del hist[0:excess]
+
+
+def load_history() -> List[dict]:
+    """Load command history from file."""
+    if HISTORY_FILE.exists():
+        try:
+            return json.loads(HISTORY_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+
+def save_history(hist: List[dict]) -> None:
+    """Save command history to file."""
+    try:
+        ensure_history_capacity(hist)
+        HISTORY_FILE.write_text(json.dumps(hist, indent=2))
+    except Exception as e:
+        logger.exception("Failed to write history: %s", e)
+
+# -------------------------
+# Stream parsing helpers
+# -------------------------
+
+
+def parse_streamed_line(raw_line: str) -> Optional[str]:
+    """
+    Handle streaming formats like 'data: {...}' or raw json chunks.
+    Return the content string if found, else None.
+    Skip SSE comments (lines starting with ':') and non-data lines.
+    """
+    if not raw_line:
+        return None
+    line = raw_line.strip()
+    if not line:
+        return None
+    if line.startswith(":"):
+        return None  # Skip comments/keep-alive
+    if not line.startswith("data:"):
+        return None  # Only process data: lines
+    payload = line[len("data:"):].strip()
+    if payload == "[DONE]":
+        return None
+    try:
+        data = json.loads(payload)
+        choices = data.get("choices") or []
+        for c in choices:
+            delta = c.get("delta") or {}
+            content = delta.get("content")
+            if content:
+                return content
+            message = c.get("message") or {}
+            content = message.get("content") or ""
+            if content:
+                return content
+    except json.JSONDecodeError:
+        # If not valid JSON, ignore
+        return None
     return None
 
 # -------------------------
-# Security Functions
+# Safety checks & filtering
 # -------------------------
 
-def validate_command(cmd: str) -> Tuple[bool, List[str]]:
-    """Validate command against security rules."""
-    reasons = []
-    
-    # Length check
-    if len(cmd) > MAX_COMMAND_LENGTH:
-        reasons.append(f"Command exceeds maximum length ({MAX_COMMAND_LENGTH} chars)")
-    
-    # Blacklist check
+
+def contains_blacklist(cmd: str) -> bool:
+    """Check if command matches any blacklist pattern."""
     for rx in BLACKLIST_REGEX:
         if rx.search(cmd):
-            reasons.append(f"Matches blacklist pattern: {rx.pattern}")
-    
-    # Base command extraction
+            return True
+    return False
+
+
+def has_danger_keyword(cmd: str) -> bool:
+    """Check if command contains any danger keyword."""
+    lowered = cmd.lower()
+    return any(k in lowered for k in DANGER_KEYWORDS)
+
+
+def extract_base_command(cmd: str) -> Optional[str]:
+    """Return the first token (base command) from a shell command string."""
     try:
-        parts = shlex.split(cmd.strip())
-        base_cmd = parts[0].lower() if parts else None
-    except ValueError:
-        base_cmd = cmd.strip().split()[0].lower() if cmd.strip() else None
-    
-    # Whitelist check
-    if base_cmd and base_cmd not in SAFE_COMMANDS:
-        reasons.append(f"Command not in whitelist: {base_cmd}")
-    
-    # Executable check
-    if base_cmd and not (base_cmd.startswith('/') or base_cmd.startswith('./')):
-        if not shutil.which(base_cmd):
-            reasons.append(f"Executable not found in PATH: {base_cmd}")
-    
+        tokens = shlex.split(cmd, posix=True)
+        if not tokens:
+            return None
+        return tokens[0].lower()
+    except Exception:
+        # fallback by whitespace split
+        return cmd.strip().split()[0].lower() if cmd.strip() else None
+
+
+def is_safe_command(cmd: str) -> Tuple[bool, List[str]]:
+    """
+    Check if command is safe:
+    - Does not match blacklist
+    - Is in whitelist or allowed by docker
+    - Executable exists in PATH (except python inline)
+    Returns (is_safe, list_of_reasons_if_not)
+    """
+    reasons = []
+
+    if contains_blacklist(cmd):
+        reasons.append("matches blacklist pattern")
+
+    base = extract_base_command(cmd) or ""
+
+    # If base is an absolute path check it exists
+    if base.startswith("/"):
+        if not Path(base).exists():
+            reasons.append(f"command path not found: {base}")
+    else:
+        if base and base not in SAFE_COMMANDS:
+            reasons.append(f"'{base}' not in whitelist")
+        else:
+            # if allowed, ensure executable exists on PATH unless python inline
+            if base and not shutil.which(base) and not base.startswith("python"):
+                reasons.append(f"executable not found in PATH: {base}")
+
     return (len(reasons) == 0, reasons)
 
-def contains_danger_keywords(cmd: str) -> bool:
-    """Check if command contains dangerous keywords."""
-    cmd_lower = cmd.lower()
-    return any(kw in cmd_lower for kw in DANGER_KEYWORDS)
-
 # -------------------------
-# Command Processing
+# Command grouping / parsing
 # -------------------------
 
-def parse_commands(raw: str) -> List[str]:
-    """Parse commands from AI response."""
-    commands = []
-    current_command = []
-    
+
+def sanitize_ai_output(raw: str) -> List[str]:
+    """
+    Remove markdown fences and extra characters from AI output.
+    Returns list of lines containing command strings.
+    """
+    lines = []
     for line in raw.splitlines():
-        line = line.strip()
-        
-        # Skip empty lines and code fences
-        if not line or line.startswith('```'):
+        # skip code fences
+        if line.strip().startswith("```"):
             continue
-            
-        # Remove leading markers
-        line = re.sub(r'^\s*[>-]\s*', '', line)
-        
-        # Handle line continuations
-        if line.endswith('\\'):
-            current_command.append(line[:-1].strip())
+        # remove leading markdown markers like > or -
+        line = re.sub(r"^\s*[>-]\s*", "", line)
+        if line.strip():
+            lines.append(line.rstrip())
+    return lines
+
+
+def filter_command_lines(lines: List[str]) -> List[str]:
+    """
+    Accept only lines that look like commands (basic heuristic).
+    Skip lines with backticks or non-ASCII control characters.
+    """
+    cmd_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if "`" in stripped or any(ord(c) < 32 for c in stripped):
             continue
-        
-        # Complete current command
-        if current_command:
-            current_command.append(line)
-            commands.append(' '.join(current_command))
-            current_command = []
+        # simple heuristic: line starts with sudo, bash, ./, or alphanumeric command
+        if re.match(r"^(sudo\s+|bash\s+|./|[A-Za-z0-9_-]+\b)", stripped):
+            cmd_lines.append(stripped)
+    return cmd_lines
+
+
+def group_multiline_commands(lines: List[str]) -> List[str]:
+    """Group multiline commands ending with backslash into single command strings."""
+    grouped = []
+    buf: List[str] = []
+    for line in lines:
+        stripped_line = line.rstrip()
+        if stripped_line.endswith("\\"):
+            buf.append(stripped_line[:-1].rstrip())
         else:
-            commands.append(line)
-    
-    # Add any remaining command parts
-    if current_command:
-        commands.append(' '.join(current_command))
-    
-    return commands
+            if buf:
+                buf.append(stripped_line)
+                grouped.append(" ".join(buf))
+                buf = []
+            else:
+                grouped.append(stripped_line)
+    if buf:
+        grouped.append(" ".join(buf))
+    return grouped
 
 # -------------------------
-# API Communication
+# OpenRouter streaming
 # -------------------------
 
-def query_ai(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> Optional[str]:
-    """Query the AI API with streaming support."""
+
+def stream_completion(
+    api_key: str, user_prompt: str, model: str = DEFAULT_MODEL, timeout: int = STREAM_TIMEOUT
+) -> Optional[str]:
+    """Send prompt to OpenRouter API and stream back response content."""
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "X-Title": f"{APP_NAME}/{VERSION}",
+        "X-Title": APP_NAME,
     }
-    
+
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
+            {"role": "system", "content": DAN_PROMPT},
+            {"role": "user", "content": user_prompt + "\n\nReply ONLY with runnable shell commands, no explanation."},
         ],
         "stream": True,
     }
-    
+
     try:
-        response = requests.post(
-            API_URL,
-            headers=headers,
-            json=payload,
-            stream=True,
-            timeout=30
-        )
-        response.raise_for_status()
-        
-        buffer = []
-        last_activity = time.time()
-        
-        for line in response.iter_lines():
-            if time.time() - last_activity > STREAM_TIMEOUT:
-                logger.warning("Stream timeout reached")
-                break
-                
-            if line:
-                last_activity = time.time()
-                content = parse_stream_line(line)
-                if content:
-                    buffer.append(content)
-                    console.print(content, end="", style="bold green")
-        
-        console.print()
-        return ''.join(buffer)
-        
+        with requests.post(API_URL, headers=headers, json=payload, stream=True, timeout=30) as resp:
+            if resp.status_code != 200:
+                console.print(f"[red]API Error {resp.status_code}: {resp.text}[/red]")
+                logger.error("API error %s %s", resp.status_code, resp.text)
+                return None
+
+            out = []
+            last_activity = time.time()
+            for raw in resp.iter_lines(decode_unicode=True):
+                if raw:
+                    last_activity = time.time()
+                    content = parse_streamed_line(raw)
+                    if content:
+                        out.append(content)
+                        console.print(content, end="", style="bold bright_green")
+                if time.time() - last_activity > timeout:
+                    logger.warning("Stream timed out after %s seconds", timeout)
+                    break
+            console.print()
+            return "".join(out)
     except requests.exceptions.RequestException as e:
-        logger.error(f"API request failed: {e}")
-        console.print(f"[red]API Error: {e}[/red]")
+        console.print(f"[red]Request error: {e}[/red]")
+        logger.exception("Request exception: %s", e)
         return None
 
-def parse_stream_line(line: bytes) -> Optional[str]:
-    """Parse a single line from the streaming response."""
-    try:
-        line = line.decode('utf-8').strip()
-        if not line or line == "data: [DONE]":
-            return None
-            
-        if line.startswith("data:"):
-            line = line[5:].strip()
-        
-        data = json.loads(line)
-        choices = data.get("choices", [])
-        for choice in choices:
-            if "delta" in choice:
-                return choice["delta"].get("content", "")
-            if "message" in choice:
-                return choice["message"].get("content", "")
-    except Exception:
-        return None
-    return None
-
 # -------------------------
-# Command Execution
+# Execution functions
 # -------------------------
 
-def execute_command(cmd: str, use_docker: bool = False) -> Tuple[int, str, str]:
-    """Execute a command with optional Docker sandboxing."""
+
+def run_in_docker_if_available(cmd: str, use_docker: bool) -> Tuple[int, str, str]:
+    """
+    Execute command inside docker sandbox if requested and available,
+    otherwise run directly on host shell.
+    """
     if use_docker and shutil.which("docker"):
         safe_cmd = shlex.quote(cmd)
         docker_cmd = (
-            "docker run --rm --network none --security-opt no-new-privileges "
-            f"-v /tmp:/tmp ubuntu:22.04 bash -c {safe_cmd}"
+            f"docker run --rm --network none --security-opt no-new-privileges "
+            f"-v /tmp:/tmp -v /etc/localtime:/etc/localtime:ro ubuntu:22.04 bash -lc {safe_cmd}"
         )
-        cmd_to_exec = docker_cmd
+        exec_cmd = docker_cmd
     else:
-        cmd_to_exec = cmd
-    
-    logger.info(f"Executing: {cmd_to_exec}")
-    
+        exec_cmd = cmd
+
+    logger.info("Executing command: %s", exec_cmd)
+
     try:
         proc = subprocess.Popen(
-            cmd_to_exec,
+            exec_cmd,
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             executable="/bin/bash",
         )
-        
         stdout, stderr = proc.communicate(timeout=COMMAND_TIMEOUT_SEC)
         return proc.returncode, stdout, stderr
-        
     except subprocess.TimeoutExpired:
         proc.kill()
-        return -1, "", "Command timed out"
+        stdout, stderr = proc.communicate()
+        logger.warning("Command timed out: %s", cmd)
+        return -1, stdout, stderr
     except Exception as e:
-        logger.error(f"Command execution failed: {e}")
+        logger.exception("Execution error: %s", e)
         return -2, "", str(e)
 
+
+def interactive_execute(commands: List[str], use_docker: bool, dry_run: bool) -> None:
+    """Interactively confirm and execute commands one by one."""
+    for i, cmd in enumerate(commands, start=1):  # Start indexing from 1 for user-friendliness
+        console.rule(f"Command {i}")
+        console.print(Panel(cmd, title=f"Command {i}", style="bright_magenta"))
+
+        if contains_blacklist(cmd):
+            console.print("[red]This command matches a blacklist pattern and will NOT be executed.[/red]")
+            logger.warning("Blacklisted command blocked: %s", cmd)
+            continue
+
+        safe, reasons = is_safe_command(cmd)
+        if not safe:
+            console.print(f"[yellow]Command flagged: {', '.join(reasons)}[/yellow]")
+            if not Confirm.ask("Proceed despite warnings?", default=False):
+                console.print("Skipping command.")
+                continue
+
+        if has_danger_keyword(cmd):
+            console.print("[red]Danger keyword detected — requires explicit confirmation.[/red]")
+            if not Confirm.ask("Are you sure you want to run this command?", default=False):
+                console.print("Skipping command.")
+                continue
+
+        if dry_run:
+            console.print("[cyan]Dry-run mode: not executing.\n" + cmd)
+            continue
+
+        code, out, err = run_in_docker_if_available(cmd, use_docker)
+        if out:
+            console.print(Panel(Text(out), title="STDOUT", style="bright_green"))
+        if err:
+            console.print(Panel(Text(err), title="STDERR", style="bright_red"))
+        if code == 0:
+            console.print("[bold green]Command completed successfully.[/bold green]")
+        elif code > 0:
+            console.print(f"[bold red]Command returned non-zero exit code: {code}[/bold red]")
+        else:
+            console.print(f"[bold red]Command execution error (code {code}). Check logs.[/bold red]")
+
+
 # -------------------------
-# History Management
+# CLI Main
 # -------------------------
 
-def load_history() -> List[Dict]:
-    """Load command history from file."""
-    if HISTORY_FILE.exists():
-        try:
-            with open(HISTORY_FILE, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load history: {e}")
-    return []
-
-def save_history(history: List[Dict]) -> None:
-    """Save command history to file."""
-    try:
-        with open(HISTORY_FILE, 'w') as f:
-            json.dump(history[-HISTORY_MAX_ENTRIES:], f)
-    except Exception as e:
-        logger.error(f"Failed to save history: {e}")
-
-# -------------------------
-# Main Application
-# -------------------------
-
-def main():
-    parser = argparse.ArgumentParser(description=f"{APP_NAME} - Advanced CLI Assistant")
-    parser.add_argument("--no-save-key", action="store_true", help="Don't save API key to disk")
-    parser.add_argument("--use-docker", action="store_true", help="Use Docker sandbox when available")
-    parser.add_argument("--dry-run", action="store_true", help="Show commands without executing")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="Model to use")
-    parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Advanced DestroyGPT CLI")
+    parser.add_argument("--no-save-key", action="store_true", help="Do not save API key to disk")
+    parser.add_argument("--use-docker", action="store_true", help="Run commands inside a docker sandbox if available")
+    parser.add_argument("--dry-run", action="store_true", help="Do not execute commands, only show them")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="Model to use (OpenRouter style)")
+    parser.add_argument("--verbosity", type=int, default=1, help="Logging verbosity (0..2)")
     args = parser.parse_args()
-    
-    setup_logging(args.verbose)
-    logger.info(f"Starting {APP_NAME} v{VERSION}")
-    
-    # API Key handling
+
+    setup_logging(args.verbosity)
+    logger.info("Starting %s", APP_NAME)
+
     api_key = load_api_key()
     if not api_key:
-        console.print("[bold]OpenRouter API Key required[/bold]")
-        api_key = getpass.getpass("API Key: ").strip()
+        console.print("[bold green]Enter your OpenRouter API Key (input hidden):[/bold green]")
+        try:
+            api_key = getpass.getpass("API Key: ").strip()
+        except Exception:
+            api_key = Prompt.ask("API Key").strip()
         if not api_key:
-            console.print("[red]API key is required[/red]")
+            console.print("[red]API key is required. Exiting.[/red]")
             sys.exit(1)
         if not args.no_save_key:
             save_api_key(api_key)
-    
+
     history = load_history()
-    
-    console.print(f"[bold green]{APP_NAME} v{VERSION}[/bold green]")
-    console.print("Type 'exit' to quit. Commands will be shown for confirmation before execution.")
-    
+
+    console.print(f"[bold bright_green]{APP_NAME} - advanced mode[/bold bright_green]")
+    console.print("Type 'exit' to quit. After AI reply you'll be shown parsed commands and invited to run them.")
+
     while True:
         try:
-            prompt = Prompt.ask("[bold cyan]>>>[/bold cyan]").strip()
-            if not prompt:
+            user_input = Prompt.ask("DestroyGPT >>>").strip()
+            if not user_input:
                 continue
-            if prompt.lower() in ('exit', 'quit'):
+            if user_input.lower() in {"exit", "quit"}:
+                console.print("[bold red]Goodbye.[/bold red]")
                 break
-            
-            console.print("[dim]Querying AI...[/dim]")
-            response = query_ai(api_key, prompt, args.model)
-            if not response:
+
+            console.print("[dim]Requesting model...[/dim]")
+            raw = stream_completion(api_key, user_input, model=args.model)
+            if raw is None:
+                console.print("[red]No response from model.[/red]")
                 continue
-            
-            commands = parse_commands(response)
-            if not commands:
-                console.print("[yellow]No valid commands found in response[/yellow]")
+
+            # sanitize & parse
+            lines = sanitize_ai_output(raw)
+            cmd_lines = filter_command_lines(lines)
+            grouped = group_multiline_commands(cmd_lines)
+
+            if not grouped:
+                console.print("[yellow]No executable-looking commands found in model response.[/yellow]")
+                history.append({"prompt": user_input, "response_raw": raw, "timestamp": time.time()})
+                save_history(history)
                 continue
-            
-            # Add to history
-            history.append({
-                "timestamp": datetime.now().isoformat(),
-                "prompt": prompt,
-                "commands": commands
-            })
-            save_history(history)
-            
-            # Display commands
-            table = Table(title="Generated Commands", show_lines=True)
-            table.add_column("#", style="cyan")
+
+            # show commands summary table
+            table = Table(title="Parsed Commands")
+            table.add_column("#", style="cyan", width=4)
             table.add_column("Command", style="magenta")
-            for i, cmd in enumerate(commands):
-                table.add_row(str(i), cmd)
+            for i, c in enumerate(grouped, start=1):  # Start indexing from 1
+                table.add_row(str(i), c)
             console.print(table)
-            
-            # Command execution
-            if args.dry_run:
-                console.print("[cyan]Dry run mode - no commands executed[/cyan]")
-                continue
-                
-            if Confirm.ask("Execute these commands?", default=False):
-                indices = Prompt.ask(
-                    "Which commands? (comma/range, e.g. 0,2 or 0-2)",
-                    default="all"
-                )
-                
-                selected = set()
-                if indices.lower() == 'all':
-                    selected = set(range(len(commands)))
-                else:
-                    for part in indices.split(','):
+
+            # append to history
+            history.append({"prompt": user_input, "response": grouped, "timestamp": time.time()})
+            save_history(history)
+
+            # interactive execution
+            if Confirm.ask("Would you like to run any of these commands?", default=False):
+                indices = Prompt.ask("Enter indices (e.g. 1 or 1-3 or 1,3)")
+                # parse indices
+                chosen = set()
+                try:
+                    for part in indices.split(","):
                         part = part.strip()
-                        if '-' in part:
-                            start, end = map(int, part.split('-'))
-                            selected.update(range(start, end + 1))
-                        elif part.isdigit():
-                            selected.add(int(part))
-                
-                for idx in sorted(selected):
-                    if 0 <= idx < len(commands):
-                        cmd = commands[idx]
-                        
-                        # Validate command
-                        is_safe, reasons = validate_command(cmd)
-                        if not is_safe:
-                            console.print(f"[red]Command {idx} blocked: {', '.join(reasons)}[/red]")
+                        if not part:
                             continue
-                            
-                        if contains_danger_keywords(cmd):
-                            console.print(f"[bold red]DANGER: Command {idx} contains dangerous operations[/bold red]")
-                            if not Confirm.ask(f"Really execute command {idx}?", default=False):
-                                continue
-                        
-                        console.print(Panel(cmd, title=f"Executing Command {idx}", style="yellow"))
-                        exit_code, stdout, stderr = execute_command(cmd, args.use_docker)
-                        
-                        if stdout:
-                            console.print(Panel(stdout, title="Output", style="green"))
-                        if stderr:
-                            console.print(Panel(stderr, title="Error", style="red"))
-                        
-                        if exit_code == 0:
-                            console.print(f"[green]Command {idx} completed successfully[/green]")
+                        if "-" in part:
+                            a, b = map(int, part.split("-", 1))
+                            chosen.update(range(a, b + 1))
                         else:
-                            console.print(f"[red]Command {idx} failed with code {exit_code}[/red]")
+                            chosen.add(int(part))
+                    chosen_cmds = [grouped[i-1] for i in sorted(chosen) if 1 <= i <= len(grouped)]
+                    if chosen_cmds:
+                        interactive_execute(chosen_cmds, use_docker=args.use_docker, dry_run=args.dry_run)
                     else:
-                        console.print(f"[yellow]Invalid command index: {idx}[/yellow]")
-            
+                        console.print("[yellow]No valid selection.[/yellow]")
+                except ValueError:
+                    console.print("[yellow]Invalid index input. Please use numbers only.[/yellow]")
+
         except KeyboardInterrupt:
-            console.print("\n[yellow]Interrupted - use 'exit' to quit[/yellow]")
+            console.print("\n[bold red]Interrupted by user. Exiting.[/bold red]")
+            break
         except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            console.print(f"[red]Error: {e}[/red]")
-    
-    console.print("[bold green]Session ended[/bold green]")
+            logger.exception("Unhandled exception: %s", e)
+            console.print(f"[red]Unexpected error: {e}[/red]")
 
 if __name__ == "__main__":
     main()

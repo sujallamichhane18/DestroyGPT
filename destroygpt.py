@@ -27,10 +27,10 @@ import sys
 import time
 from datetime import datetime
 from enum import Enum, auto
-from logging.handlers import RotatingFileHandler import logger
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
-
+import logging
 import requests
 from rich.console import Console
 from rich.live import Live

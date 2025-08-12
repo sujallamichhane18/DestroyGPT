@@ -7,7 +7,7 @@ Advanced DestroyGPT CLI (refactor)
 - Stream-resilient OpenRouter streaming parser
 - Rotating history and logging
 - Dry-run and interactive per-command confirmation
-- Command execution watchdog using communicate(timeout=...)
+- Command execution watchdog with live output streaming
 - Configurable via argparse and a small config section
 - Keeps compatibility with original features (rich UI, live output)
 
@@ -26,9 +26,12 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
+import uuid
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -62,7 +65,7 @@ SAFE_COMMANDS = {
     "ip", "ifconfig", "tcpdump", "dig", "host", "traceroute", "whoami", "id",
     "uname", "cat", "grep", "awk", "sed", "find", "ls", "ps", "kill", "docker",
     "kubectl", "helm", "git", "java", "node", "pip", "pip3", "jq", "openssl",
-    "echo",  # Added for basic commands like hello
+    "echo",
 }
 
 # Blacklist patterns (dangerous ops)
@@ -221,15 +224,24 @@ def has_danger_keyword(cmd: str) -> bool:
 
 
 def extract_base_command(cmd: str) -> Optional[str]:
-    """Return the first token (base command) from a shell command string."""
+    """Return the first token (base command) from a shell command string, skipping 'sudo' if present."""
     try:
         tokens = shlex.split(cmd, posix=True)
         if not tokens:
             return None
-        return tokens[0].lower()
+        base = tokens[0].lower()
+        if base == "sudo" and len(tokens) > 1:
+            base = tokens[1].lower()
+        return base
     except Exception:
         # fallback by whitespace split
-        return cmd.strip().split()[0].lower() if cmd.strip() else None
+        parts = cmd.strip().split()
+        if not parts:
+            return None
+        base = parts[0].lower()
+        if base == "sudo" and len(parts) > 1:
+            base = parts[1].lower()
+        return base
 
 
 def is_safe_command(cmd: str) -> Tuple[bool, List[str]]:
@@ -376,15 +388,16 @@ def stream_completion(
 def run_in_docker_if_available(cmd: str, use_docker: bool) -> Tuple[int, str, str]:
     """
     Execute command inside docker sandbox if requested and available,
-    otherwise run directly on host shell.
+    otherwise run directly on host shell. Streams output live and handles timeouts/interrupts properly.
     """
+    docker_container_name = None
     if use_docker and shutil.which("docker"):
+        docker_container_name = f"destroygpt_{uuid.uuid4().hex[:8]}"
         safe_cmd = shlex.quote(cmd)
-        docker_cmd = (
-            f"docker run --rm --network none --security-opt no-new-privileges "
+        exec_cmd = (
+            f"docker run --rm --name {docker_container_name} --network none --security-opt no-new-privileges "
             f"-v /tmp:/tmp -v /etc/localtime:/etc/localtime:ro ubuntu:22.04 bash -lc {safe_cmd}"
         )
-        exec_cmd = docker_cmd
     else:
         exec_cmd = cmd
 
@@ -397,23 +410,76 @@ def run_in_docker_if_available(cmd: str, use_docker: bool) -> Tuple[int, str, st
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            bufsize=1,
+            preexec_fn=os.setsid if not docker_container_name else None,
             executable="/bin/bash",
         )
-        stdout, stderr = proc.communicate(timeout=COMMAND_TIMEOUT_SEC)
-        return proc.returncode, stdout, stderr
+    except Exception as e:
+        logger.exception("Failed to start process: %s", e)
+        return -2, "", str(e)
+
+    stdout_lines: List[str] = []
+    stderr_lines: List[str] = []
+
+    def read_stdout():
+        if proc.stdout:
+            for line in iter(proc.stdout.readline, ''):
+                console.print(line.rstrip(), style="bright_green")
+                stdout_lines.append(line)
+
+    def read_stderr():
+        if proc.stderr:
+            for line in iter(proc.stderr.readline, ''):
+                console.print(line.rstrip(), style="bright_red")
+                stderr_lines.append(line)
+
+    t_stdout = threading.Thread(target=read_stdout, daemon=True)
+    t_stderr = threading.Thread(target=read_stderr, daemon=True)
+    t_stdout.start()
+    t_stderr.start()
+
+    try:
+        start_time = time.time()
+        while proc.poll() is None:
+            if time.time() - start_time > COMMAND_TIMEOUT_SEC:
+                raise subprocess.TimeoutExpired(exec_cmd, COMMAND_TIMEOUT_SEC)
+            time.sleep(0.1)
     except subprocess.TimeoutExpired:
-        proc.kill()
-        stdout, stderr = proc.communicate()
         logger.warning("Command timed out: %s", cmd)
-        return -1, stdout, stderr
+        if docker_container_name:
+            subprocess.call(["docker", "kill", docker_container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        code = -1
+    except KeyboardInterrupt:
+        logger.info("Command interrupted by user: %s", cmd)
+        if docker_container_name:
+            subprocess.call(["docker", "kill", docker_container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            time.sleep(1)
+            if proc.poll() is None:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        code = -3
     except Exception as e:
         logger.exception("Execution error: %s", e)
-        return -2, "", str(e)
+        if docker_container_name:
+            subprocess.call(["docker", "kill", docker_container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        code = -2
+    else:
+        code = proc.returncode or 0
+
+    t_stdout.join()
+    t_stderr.join()
+
+    return code, ''.join(stdout_lines), ''.join(stderr_lines)
 
 
 def interactive_execute(commands: List[str], use_docker: bool, dry_run: bool) -> None:
     """Interactively confirm and execute commands one by one."""
-    for i, cmd in enumerate(commands, start=1):  # Start indexing from 1 for user-friendliness
+    for i, cmd in enumerate(commands, start=1):
         console.rule(f"Command {i}")
         console.print(Panel(cmd, title=f"Command {i}", style="bright_magenta"))
 
@@ -446,6 +512,10 @@ def interactive_execute(commands: List[str], use_docker: bool, dry_run: bool) ->
             console.print(Panel(Text(err), title="STDERR", style="bright_red"))
         if code == 0:
             console.print("[bold green]Command completed successfully.[/bold green]")
+        elif code == -1:
+            console.print("[bold red]Command timed out.[/bold red]")
+        elif code == -3:
+            console.print("[bold red]Command interrupted by user.[/bold red]")
         elif code > 0:
             console.print(f"[bold red]Command returned non-zero exit code: {code}[/bold red]")
         else:

@@ -13,6 +13,13 @@ Key Improvements:
 8. Better documentation and type hints
 """
 
+#!/usr/bin/env python3
+"""
+Advanced DestroyGPT CLI (refactor)
+"""
+
+from __future__ import annotations
+
 import argparse
 import getpass
 import json
@@ -26,11 +33,10 @@ import subprocess
 import sys
 import time
 from datetime import datetime
-from enum import Enum, auto
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Union
-import logging
+from typing import List, Optional, Tuple
+
 import requests
 from rich.console import Console
 from rich.live import Live
@@ -38,6 +44,11 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
+
+# Setup logging
+logger = logging.getLogger(__name__)
+
+# Rest of your code...
 
 # -------------------------
 # Configuration / Constants

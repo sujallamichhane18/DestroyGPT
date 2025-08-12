@@ -1,83 +1,123 @@
-# 🔥 DestroyGPT
-
-**DestroyGPT** is a blazing-fast, terminal-based AI assistant for **ethical hacking** and **pentesting**.  
-Built on [OpenRouter](https://openrouter.ai), it helps you generate payloads, perform recon, or analyze exploits — directly from your CLI.
 
 ---
 
-![DestroyGPT Status](https://img.shields.io/badge/status-active-success?style=flat-square)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
+🛡️ DestroyGPT
+
+AI-Powered CLI for Ethical Hacking with Safe Command Execution
+
+DestroyGPT is a secure AI-assisted terminal tool for penetration testers and ethical hackers.
+It integrates with OpenRouter.ai to use models like DeepSeek-R1, GPT-4o, and Grok for generating security commands, payloads, and exploit strategies.
+
+Unlike ordinary tools, it can execute commands directly in your terminal — but with whitelisting, blacklisting, pattern checks, optional Docker sandboxing, and interactive confirmation to prevent damage.
+
 
 ---
 
-## ✨ Features
+✨ Features
 
-- 🧠 Powered by OpenRouter LLMs (e.g., DeepSeek: R1 0528 (free) , GPT-4o, etc.)
-- ⚡ Fast & minimal streaming responses
-- 🔐 API Key stored securely at `~/.destroygpt_api_key`
-- For API : https://openrouter.ai/deepseek/deepseek-r1-0528:free
-- 🧼 Cleans messy Markdown from AI output
-- 📟 CLI-based real-time chat with ethical hacking focus
-- 🎯 No BS — payloads, tactics, tools, and recon in one-liners
+Multi-model LLM Support – GPT-4o, DeepSeek-R1, Grok, etc.
+
+Safe Command Execution – Whitelist, blacklist, keyword detection, and manual confirmation.
+
+Optional Docker Sandbox – Runs commands inside isolated containers if available.
+
+Streaming AI Responses – Live output as commands are generated.
+
+Command History – Saves up to 5000 past commands in JSON format.
+
+Logging – Rotating log files for auditing and debugging.
+
+Dry-Run Mode – Review commands before execution.
+
+
 
 ---
 
-## 🚀 Quick Start
+⚙️ Installation
 
-### 1. Clone the repository
+# Clone the repository
+git clone https://github.com/sujallamichhane18/DestroyGPT.git
+cd DestroyGPT
 
-```bash
-1. git clone https://github.com/sujallamichhane18/DestroyerGPT
-cd destroyGPT
-2. Create the virtual environment (named .venv)
-python -m venv .venv
-✅ This will create a folder .venv/ containing your isolated Python environment.
-
-3. Activate the virtual environment
-On Linux/macOS: source .venv/bin/activate
-On Windows (CMD):  .venv\Scripts\activate
-On Windows (PowerShell): .\.venv\Scripts\Activate.ps1
-
-4. Install dependencies
+# Install dependencies
 pip install -r requirements.txt
-Or manually: pip install requests rich
-
-5. Run DestroyGPT : python3 destroygpt.py
-
-🔑 First-Time API Key Setup
-DestroyGPT uses your OpenRouter API Key to make model requests.
-
-You'll be prompted to paste the key on first launch
-
-It will be stored securely in: ~/.destroygpt_api_key (chmod 600)
-
-You can also export it directly in the terminal:
 
 
-export OPENROUTER_API_KEY="your_api_key"
-🔒 Your API key is hidden and never exposed.
+---
 
-🧪 Example Prompts
+🔑 API Key Setup
 
-DestroyGPT >>> generate metasploit payload for android
-DestroyGPT >>> what’s the nmap scan to detect open SMB ports
-DestroyGPT >>> bash script to brute force login on FTP
-DestroyGPT >>> how to exploit CVE-2021-3156
-📁 File Structure
+DestroyGPT-Advanced uses OpenRouter.ai for LLM access.
+Set up your API key in one of the following ways:
 
-destroygpt/
-├── destroygpt.py          # Main CLI code
-├── requirements.txt       # Python dependencies
-└── README.md              # You're here
+# Save to file
+echo "your_api_key_here" > ~/.destroygpt_api_key
+chmod 600 ~/.destroygpt_api_key
+
+# OR set as environment variable
+export OPENROUTER_API_KEY="your_api_key_here"
+
+
+---
+
+🚀 Usage
+
+Run with default model:
+
+python destroygpt_advanced.py
+
+Example interaction:
+
+DestroyGPT >>> Generate a command to scan open ports on example.com
+nmap -sV example.com
+
+Command 1:
+nmap -sV example.com
+Proceed? (y/N) y
+[Command output appears here]
+
+Special Commands:
+
+cmd: <your_command> → Directly execute a system command (if safe).
+
+exit or quit → Leave the CLI.
+
+
+
+---
+
+🛡️ Safety Layers
+
+Whitelist → Only allows predefined safe tools (e.g., nmap, curl, ssh, dig, etc.).
+
+Blacklist Patterns → Blocks dangerous patterns (e.g., rm -rf /, mkfs, forkbomb).
+
+Danger Keywords → Prompts explicit confirmation before running.
+
+Docker Isolation → Optionally runs commands in a ubuntu:22.04 sandbox.
+
+Timeouts & Interrupts → Auto-kills commands after set duration.
+
+
+
+---
 
 ⚠️ Disclaimer
-This tool is intended for educational and ethical use only.
-The author is not responsible for any misuse.
-Never use DestroyGPT to target or harm systems without explicit permission.
 
-📄 License
-This project is licensed under the MIT License.
+> This tool is for authorized penetration testing, research, and educational purposes only.
+Any misuse for illegal hacking activities is strictly prohibited.
+The author is not responsible for any damage caused by misuse.
 
-👤 Author
-Built with ❤️ by Sujal Lamichhane by using AI.
-If you like it, give it a ⭐️!
+
+
+
+---
+
+📜 License
+
+Licensed under the MIT License – see LICENSE for details.
+
+
+---
+
+

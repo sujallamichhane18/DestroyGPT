@@ -26,7 +26,6 @@ import os
 import re
 import shlex
 import shutil
-import signal
 import subprocess
 import sys
 import time
@@ -69,15 +68,15 @@ SAFE_COMMANDS = {
 
 # Blacklist patterns (dangerous ops)
 BLACKLIST_PATTERNS = [
-    r"rm\s+-rf\s+/",
-    r"rm\s+-rf\s+",
+    r"rm\s+-rf\s+/",         # rm -rf / dangerous
+    r"rm\s+-rf\s+",          # rm -rf anywhere else also blocked
     r":👦👦\s{\s*:|:\s*&\s*};?",  # fork bomb
-    r"dd\s+if=",  # destructive disk writes
-    r"mkfs.",
-    r"shutdown\b",
-    r"reboot\b",
-    r":>\s*/",  # truncate root
-    r"chmod\s+0+\s+/",  # chmod root
+    r"dd\s+if=",             # destructive disk writes
+    r"mkfs.",                # format disk
+    r"shutdown\b",           # shutdown command
+    r"reboot\b",             # reboot command
+    r":>\s*/",               # truncate root file
+    r"chmod\s+0+\s+/",       # chmod root
 ]
 BLACKLIST_REGEX = [re.compile(x, re.IGNORECASE) for x in BLACKLIST_PATTERNS]
 
@@ -274,11 +273,19 @@ def sanitize_ai_output(raw: str) -> List[str]:
     Returns list of lines containing command strings.
     """
     lines = []
+    in_code_block = False
     for line in raw.splitlines():
-        # skip code fences
-        if line.strip().startswith("```") or line.strip().startswith("```"):
+        stripped_line = line.strip()
+        # toggle code block on triple backticks
+        if stripped_line.startswith("```"):
+            in_code_block = not in_code_block
             continue
-        # remove leading markdown markers like > or -
+        if in_code_block:
+            # inside code block, accept lines as is
+            if stripped_line:
+                lines.append(line.rstrip())
+            continue
+        # outside code block, remove leading markdown markers like > or -
         line = re.sub(r"^\s*[>-]\s*", "", line)
         if line.strip():
             lines.append(line.rstrip())
@@ -295,9 +302,26 @@ def filter_command_lines(lines: List[str]) -> List[str]:
         stripped = line.strip()
         if "`" in stripped or any(ord(c) < 32 for c in stripped):
             continue
-        # simple heuristic: line starts with sudo, bash, ./, or alphanumeric command
-        if re.match(r"^(sudo\s+|bash\s+|./|[A-Za-z0-9_-]+\b)", stripped):
-            cmd_lines.append(stripped)
+        # Relaxed heuristic:
+        # Accept if line starts with sudo, bash, ./ or any whitelisted command,
+        # or line contains a whitelisted command as first token.
+        try:
+            tokens = shlex.split(stripped)
+            if not tokens:
+                continue
+            first_token = tokens[0].lower()
+            # Accept if first token is sudo or bash or ./script
+            if first_token in {"sudo", "bash"} or stripped.startswith("./"):
+                cmd_lines.append(stripped)
+                continue
+            # Accept if first token is in SAFE_COMMANDS
+            if first_token in SAFE_COMMANDS:
+                cmd_lines.append(stripped)
+                continue
+        except Exception:
+            # fallback: if line starts with alphanumeric word
+            if re.match(r"^[A-Za-z0-9_-]+", stripped):
+                cmd_lines.append(stripped)
     return cmd_lines
 
 
@@ -455,10 +479,10 @@ def interactive_execute(commands: List[str], use_docker: bool, dry_run: bool) ->
         else:
             console.print(f"[bold red]Command execution error (code {code}). Check logs.[/bold red]")
 
-
 # -------------------------
 # CLI Main
 # -------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Advanced DestroyGPT CLI")
@@ -505,9 +529,16 @@ def main() -> None:
                 console.print("[red]No response from model.[/red]")
                 continue
 
+            # DEBUG: show raw AI output for troubleshooting
+            console.print(f"[blue]Raw AI output:[/blue]\n{raw}")
+
             # sanitize & parse
             lines = sanitize_ai_output(raw)
+            console.print(f"[blue]Sanitized lines:[/blue]\n{lines}")
+
             cmd_lines = filter_command_lines(lines)
+            console.print(f"[blue]Filtered command lines:[/blue]\n{cmd_lines}")
+
             grouped = group_multiline_commands(cmd_lines)
 
             if not grouped:
@@ -529,10 +560,8 @@ def main() -> None:
             save_history(history)
 
             # interactive execution
-                     # interactive execution
             if Confirm.ask("Would you like to run any of these commands?", default=False):
-                indices = Prompt.ask("Enter indices (e.g. 0 or 0-2 or 0,2)")
-                # parse indices
+                indices = Prompt.ask("Enter indices (e.g. 0 or 0-2 or 0,2)").strip()
                 chosen = set()
                 for part in indices.split(","):
                     part = part.strip()
@@ -540,9 +569,17 @@ def main() -> None:
                         continue
                     if "-" in part:
                         a, b = part.split("-", 1)
-                        chosen.update(range(int(a), int(b) + 1))
+                        try:
+                            a_idx, b_idx = int(a), int(b)
+                            chosen.update(range(min(a_idx, b_idx), max(a_idx, b_idx) + 1))
+                        except ValueError:
+                            continue
                     else:
-                        chosen.add(int(part))
+                        try:
+                            idx = int(part)
+                            chosen.add(idx)
+                        except ValueError:
+                            continue
                 chosen_cmds = [grouped[i] for i in sorted(chosen) if 0 <= i < len(grouped)]
                 if chosen_cmds:
                     interactive_execute(chosen_cmds, use_docker=args.use_docker, dry_run=args.dry_run)
@@ -556,6 +593,6 @@ def main() -> None:
             logger.exception("Unhandled exception: %s", e)
             console.print(f"[red]Unexpected error: {e}[/red]")
 
+
 if __name__ == "__main__":
     main()
-

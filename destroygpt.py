@@ -27,7 +27,7 @@ import sys
 import time
 from datetime import datetime
 from enum import Enum, auto
-from logging.handlers import RotatingFileHandler
+from logging.handlers import RotatingFileHandler import logger
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 
@@ -38,7 +38,6 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
-import logger
 
 # -------------------------
 # Configuration / Constants

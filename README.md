@@ -1,7 +1,7 @@
 # 🛡️ DestroyGPT  
 
 ![License](https://img.shields.io/github/license/sujallamichhane18/DestroyGPT?color=blue)  
-![Python](https://img.shields.io/badge/Python-3.13%2B-blue)  
+![Python](https://img.shields.io/badge/Python-3.9%2B-blue)  
 ![Status](https://img.shields.io/badge/Status-Active-success)  
 
 **AI-Powered CLI for Ethical Hacking with Safe Command Execution**  

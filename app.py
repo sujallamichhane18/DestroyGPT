@@ -63,11 +63,19 @@ HISTORY_MAX_ENTRIES = 5000
 
 # ASCII Art Banner similar to theHarvester
 BANNER = """
-*     _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   _   *
-*    / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\ / \\  *
-*   ( D | e | s | t | r | o | y | G | P | T |   | A | d | v | a | n | c | e | d )                                                *
-*    \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/ \\_/   *
-*                                                                                                                                *
+
+ /$$$$$$$                        /$$                                          /$$$$$$  /$$$$$$$  /$$$$$$$$
+| $$__  $$                      | $$                                         /$$__  $$| $$__  $$|__  $$__/
+| $$  \ $$  /$$$$$$   /$$$$$$$ /$$$$$$    /$$$$$$   /$$$$$$  /$$   /$$      | $$  \__/| $$  \ $$   | $$   
+| $$  | $$ /$$__  $$ /$$_____/|_  $$_/   /$$__  $$ /$$__  $$| $$  | $$      | $$ /$$$$| $$$$$$$/   | $$   
+| $$  | $$| $$$$$$$$|  $$$$$$   | $$    | $$  \__/| $$  \ $$| $$  | $$      | $$|_  $$| $$____/    | $$   
+| $$  | $$| $$_____/ \____  $$  | $$ /$$| $$      | $$  | $$| $$  | $$      | $$  \ $$| $$         | $$   
+| $$$$$$$/|  $$$$$$$ /$$$$$$$/  |  $$$$/| $$      |  $$$$$$/|  $$$$$$$      |  $$$$$$/| $$         | $$   
+|_______/  \_______/|_______/    \___/  |__/       \______/  \____  $$       \______/ |__/         |__/   
+                                                             /$$  | $$                                    
+                                                            |  $$$$$$/                                    
+                                                             \______/                                     
+                                                                                                                    *
 """
 
 # Whitelist of allowed executable base commands (lowercase)
@@ -628,28 +636,8 @@ def main() -> None:
             history.append({"prompt": user_input, "response": grouped, "timestamp": time.time()})
             save_history(history)
 
-            # interactive execution
-            if Confirm.ask("Would you like to run any of these commands?", default=False):
-                indices = Prompt.ask("Enter indices (e.g. 1 or 1-3 or 1,3)")
-                # parse indices
-                chosen = set()
-                try:
-                    for part in indices.split(","):
-                        part = part.strip()
-                        if not part:
-                            continue
-                        if "-" in part:
-                            a, b = map(int, part.split("-", 1))
-                            chosen.update(range(a, b + 1))
-                        else:
-                            chosen.add(int(part))
-                    chosen_cmds = [grouped[i-1] for i in sorted(chosen) if 1 <= i <= len(grouped)]
-                    if chosen_cmds:
-                        interactive_execute(chosen_cmds, api_key, args.model, use_docker=args.use_docker, dry_run=args.dry_run)
-                    else:
-                        console.print("[yellow]No valid selection.[/yellow]")
-                except ValueError:
-                    console.print("[yellow]Invalid index input. Please use numbers only.[/yellow]")
+            # directly process all commands
+            interactive_execute(grouped, api_key, args.model, use_docker=args.use_docker, dry_run=args.dry_run)
 
         except KeyboardInterrupt:
             console.print("\n[bold red]Interrupted by user. Exiting.[/bold red]")

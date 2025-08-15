@@ -106,6 +106,8 @@ DAN_PROMPT = (
     "Commands may be multiline with backslashes (\\). Use sudo where necessary."
 )
 
+EXPLAIN_PROMPT = "You are a helpful assistant. Explain the following shell command in detail:"
+
 console = Console()
 logger = logging.getLogger(APP_NAME)
 
@@ -349,9 +351,9 @@ def group_multiline_commands(lines: List[str]) -> List[str]:
 
 
 def stream_completion(
-    api_key: str, user_prompt: str, model: str = DEFAULT_MODEL, timeout: int = STREAM_TIMEOUT
+    api_key: str, user_prompt: str, model: str = DEFAULT_MODEL, timeout: int = STREAM_TIMEOUT, system_prompt: str = DAN_PROMPT
 ) -> Optional[str]:
-    """Send prompt to OpenRouter API and stream back response content."""
+    """Send prompt to OpenRouter API and stream back response content. Allows custom system prompt."""
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -361,8 +363,8 @@ def stream_completion(
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": DAN_PROMPT},
-            {"role": "user", "content": user_prompt + "\n\nReply ONLY with runnable shell commands, no explanation."},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         "stream": True,
     }
@@ -490,8 +492,8 @@ def run_in_docker_if_available(cmd: str, use_docker: bool) -> Tuple[int, str, st
     return code, ''.join(stdout_lines), ''.join(stderr_lines)
 
 
-def interactive_execute(commands: List[str], use_docker: bool, dry_run: bool) -> None:
-    """Interactively confirm and execute commands one by one."""
+def interactive_execute(commands: List[str], api_key: str, model: str, use_docker: bool, dry_run: bool) -> None:
+    """Interactively confirm and execute commands one by one with [E]xecute, [D]escribe, [A]bort options."""
     for i, cmd in enumerate(commands, start=1):
         console.rule(f"Command {i}")
         console.print(Panel(cmd, title=f"Command {i}", style="bright_magenta"))
@@ -515,24 +517,34 @@ def interactive_execute(commands: List[str], use_docker: bool, dry_run: bool) ->
                 continue
 
         final_cmd = cmd
-        if Confirm.ask("Edit command?", default=False):
-            final_cmd = Prompt.ask("Enter edited command", default=cmd)
-
-        if dry_run:
-            console.print("[cyan]Dry-run mode: not executing.\n" + final_cmd)
-            continue
-
-        code, out, err = run_in_docker_if_available(final_cmd, use_docker)
-        if code == 0:
-            console.print("[bold green]Command completed successfully.[/bold green]")
-        elif code == -1:
-            console.print("[bold red]Command timed out.[/bold red]")
-        elif code == -3:
-            console.print("[bold red]Command interrupted by user.[/bold red]")
-        elif code > 0:
-            console.print(f"[bold red]Command returned non-zero exit code: {code}[/bold red]")
-        else:
-            console.print(f"[bold red]Command execution error (code {code}). Check logs.[/bold red]")
+        while True:
+            choice = Prompt.ask("[E]xecute, [D]escribe, [A]bort").strip().lower()
+            if choice.startswith('e'):
+                if dry_run:
+                    console.print("[cyan]Dry-run mode: not executing.\n" + final_cmd)
+                    break
+                code, out, err = run_in_docker_if_available(final_cmd, use_docker)
+                if code == 0:
+                    console.print("[bold green]Command completed successfully.[/bold green]")
+                elif code == -1:
+                    console.print("[bold red]Command timed out.[/bold red]")
+                elif code == -3:
+                    console.print("[bold red]Command interrupted by user.[/bold red]")
+                elif code > 0:
+                    console.print(f"[bold red]Command returned non-zero exit code: {code}[/bold red]")
+                else:
+                    console.print(f"[bold red]Command execution error (code {code}). Check logs.[/bold red]")
+                break
+            elif choice.startswith('d'):
+                console.print("[dim]Requesting description...[/dim]")
+                explain = stream_completion(api_key, final_cmd, model=model, system_prompt=EXPLAIN_PROMPT)
+                if explain:
+                    console.print(Panel(explain, title="Description", style="bright_cyan"))
+            elif choice.startswith('a'):
+                console.print("Aborting command.")
+                break
+            else:
+                console.print("[yellow]Invalid choice. Please select E, D, or A.[/yellow]")
 
 
 # -------------------------
@@ -587,7 +599,7 @@ def main() -> None:
                 console.print("[bold red]Goodbye.[/bold red]")
                 break
 
-            console.print("[dim]Requesting model...[/dim]")
+            console.print("[green]Requesting model...[/green]")
             raw = stream_completion(api_key, user_input, model=args.model)
             if raw is None:
                 console.print("[red]No response from model.[/red]")
@@ -633,7 +645,7 @@ def main() -> None:
                             chosen.add(int(part))
                     chosen_cmds = [grouped[i-1] for i in sorted(chosen) if 1 <= i <= len(grouped)]
                     if chosen_cmds:
-                        interactive_execute(chosen_cmds, use_docker=args.use_docker, dry_run=args.dry_run)
+                        interactive_execute(chosen_cmds, api_key, args.model, use_docker=args.use_docker, dry_run=args.dry_run)
                     else:
                         console.print("[yellow]No valid selection.[/yellow]")
                 except ValueError:

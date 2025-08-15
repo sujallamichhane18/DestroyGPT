@@ -47,10 +47,10 @@ from rich.text import Text
 # Configuration / Constants
 # -------------------------
 
-APP_NAME = "DestroyGPT-Advanced"
-VERSION = "1.0.0"
-AUTHOR = "Your Name"  # Replace with actual author
-EMAIL = "your.email@example.com"  # Replace with actual email
+APP_NAME = "DestroyGPT"
+VERSION = "1.0"
+AUTHOR = "kalidada"  # Replace with actual author
+WEBSITE = "sujallamichhane.com.np"  # Replace with actual email
 HOME = Path.home()
 API_KEY_FILE = HOME / ".destroygpt_api_key"
 HISTORY_FILE = HOME / ".destroygpt_cli_history.json"

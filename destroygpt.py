@@ -81,24 +81,30 @@ def call_llm(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> Optional[
         "messages": [
             {
                 "role": "system",
-                "content": """You are a cybersecurity assistant that suggests Linux/Unix commands.
-User asks a question. You MUST respond with ONLY a single command that answers their question.
-No explanations, no markdown, no code blocks - just the raw command.
+                "content": """You are a Linux command assistant. User asks a question about a target.
+Respond with ONLY a single shell command. Nothing else.
+- No explanations
+- No markdown 
+- No code blocks
+- Just the raw command
+
 Examples:
-- User: "who are you" -> id
-- User: "what's my IP" -> hostname -I
-- User: "list network connections" -> netstat -tuln
-- User: "scan subnet" -> nmap -sn 192.168.1.0/24
-- User: "find open ports" -> nmap -p- localhost"""
+- "check ssl on example.com" -> openssl s_client -connect example.com:443
+- "scan ports on 192.168.1.1" -> nmap -p- 192.168.1.1
+- "check DNS for example.com" -> dig example.com
+- "test HTTP headers" -> curl -I https://example.com
+- "enumerate subdomains" -> dnsrecon -d example.com -a
+
+IMPORTANT: Always provide a command, never say "I can't" or similar."""
             },
             {
                 "role": "user",
                 "content": prompt
             }
         ],
-        "temperature": 0.3,
-        "max_tokens": 100,
-        "stream": True
+        "temperature": 0.2,
+        "max_tokens": 150,
+        "stream": False
     }
     
     headers = {
@@ -106,33 +112,23 @@ Examples:
         "Content-Type": "application/json"
     }
     
-    response_text = []
-    
     try:
-        with requests.post(API_URL, headers=headers, json=payload, stream=True, timeout=API_TIMEOUT) as r:
-            if r.status_code != 200:
-                console.print(f"[red]✗ API Error {r.status_code}[/]")
-                return None
-            
-            for line in r.iter_lines(decode_unicode=True):
-                if line.startswith("data:"):
-                    chunk = line[5:].strip()
-                    if chunk == "[DONE]":
-                        break
-                    try:
-                        delta = json.loads(chunk)["choices"][0]["delta"]
-                        content = delta.get("content", "")
-                        if content:
-                            response_text.append(content)
-                            console.print(content, end="", style="cyan")
-                    except:
-                        pass
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=API_TIMEOUT)
         
-        console.print()
-        return "".join(response_text).strip()
+        if response.status_code != 200:
+            console.print(f"[red]✗ API Error {response.status_code}[/]")
+            return None
+        
+        data = response.json()
+        content = data["choices"][0]["message"]["content"].strip()
+        
+        if content:
+            console.print(content, style="cyan")
+        
+        return content
     
     except requests.Timeout:
-        console.print("[red]✗ Request timed out[/]")
+        console.print("[red]✗ API timeout[/]")
         return None
     except Exception as e:
         console.print(f"[red]✗ Error: {e}[/]")
@@ -203,18 +199,31 @@ def main():
     banner = """
     ╔════════════════════════════════════════════════════════════════╗
     ║                                                                ║
-    ║   ██████╗  ██████╗ ██████╗ ████████╗                           ║
-    ║   ██╔══██╗██╔════╝██╔════╝ ╚══██╔══╝                           ║
-    ║   ██║  ██║██║     ██║        ██║                              ║
-    ║   ██║  ██║██║     ██║        ██║                              ║
-    ║   ██████╔╝╚██████╗╚██████╗   ██║                              ║
-    ║   ╚═════╝  ╚═════╝ ╚═════╝   ╚═╝                              ║
+    ║                                                                ║
+    ║                                                               
+                  ▄▄▄▄▄        ▄▄▄▄   ▄▄▄▄▄▄    ▄▄▄▄▄▄▄▄ 
+                  ██▀▀▀██    ██▀▀▀▀█  ██▀▀▀▀█▄  ▀▀▀██▀▀▀ 
+                  ██    ██  ██        ██    ██     ██    
+                  ██    ██  ██  ▄▄▄▄  ██████▀      ██    
+                  ██    ██  ██  ▀▀██  ██           ██    
+                  ██▄▄▄██    ██▄▄▄██  ██           ██    
+                   ▀▀▀▀▀       ▀▀▀▀   ▀▀           ▀▀    
+                                        
+                                                                     ║
+    ║                                                                ║
+    ║                                                                ║
+    ║                                                                ║
+    ║                                                                ║
+    ║                                                                ║
+    ║                                                                ║
+    ║                                                                ║
+    ║                                                                ║
     ║                                                                ║
     ║              AI-Powered Ethical Hacking Tool                   ║
     ║                 v5.0 Minimal & Powerful                        ║
     ║                                                                ║
     ║              Author: Sujal Lamichhane                          ║
-    ║          GitHub: sujallamichhane18/DestroyGPT                 ║
+    ║          GitHub: sujallamichhane18/DestroyGPT                  ║
     ║                                                                ║
     ╚════════════════════════════════════════════════════════════════╝
     """

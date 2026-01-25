@@ -31,7 +31,7 @@ HISTORY_FILE = HOME / ".destroygpt_history.json"
 LOG_FILE = HOME / ".destroygpt.log"
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "openai/gpt-4o-mini"
+DEFAULT_MODEL = "openai/gpt-oss-20b"
 
 # Timeout settings
 STREAM_TIMEOUT = 60
@@ -196,7 +196,7 @@ def main():
  ##    ##  ##  ""##  ##           ##    
  ##mmm##    ##mmm##  ##           ##    
  """""        """"   ""           ""    
-                                        
+
     [bold cyan]AI-Powered Ethical Hacking Assistant[/]
     [bold yellow]v5.0 Minimal Edition[/]
     

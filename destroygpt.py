@@ -76,7 +76,7 @@ CACHE_DIR.mkdir(exist_ok=True)
 PLUGINS_DIR.mkdir(exist_ok=True)
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "openai/gpt-4o-mini"
+DEFAULT_MODEL = "openai/gpt-oss-20b"
 
 STREAM_TIMEOUT    = 180
 COMMAND_TIMEOUT   = 420

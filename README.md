@@ -1,15 +1,6 @@
 # 🛡️ DestroyGPT
 
-```
- ██████╗ ███████╗███████╗████████╗██████╗  ██████╗ ██╗   ██╗ ██████╗ ██████╗ ████████╗
- ██╔══██╗██╔════╝██╔════╝╚══██╔══╝██╔══██╗██╔═══██╗╚██╗ ██╔╝██╔════╝██╔════╝ ╚══██╔══╝
- ██║  ██║█████╗  ███████╗   ██║   ██████╔╝██║   ██║ ╚████╔╝ ██║     ██║        ██║
- ██║  ██║██╔══╝  ╚════██║   ██║   ██╔══██╗██║   ██║  ╚██╔╝  ██║     ██║        ██║
- ██████╔╝███████╗███████║   ██║   ██║  ██║╚██████╔╝   ██║   ╚██████╗╚██████╗   ██║
- ╚═════╝ ╚══════╝╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝    ╚═╝    ╚═════╝ ╚═════╝   ╚═╝
-
-   AI-Powered CLI for Ethical Hacking with Safe Command Execution
-```
+AI-Powered CLI for Ethical Hacking with Safe Command Execution
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
@@ -20,75 +11,17 @@
 
 ## 📺 Demo
 
-```
-╔════════════════════════════════════════════════════════════════════════════╗
-║                         DestroyGPT Live Session                            ║
-╠════════════════════════════════════════════════════════════════════════════╣
-║                                                                            ║
-║  DestroyGPT >>> Generate a command to scan open ports on example.com     ║
-║  ┌─ AI Processing... ──────────────────────────────────────────────────┐ ║
-║  │ nmap -sV example.com                                                 │ ║
-║  └──────────────────────────────────────────────────────────────────────┘ ║
-║                                                                            ║
-║  ✓ Command 1: nmap -sV example.com                                        ║
-║  ⚙️  Safety Check: PASSED (Whitelist: ✓ | Blacklist: ✓ | Keywords: ✓)    ║
-║                                                                            ║
-║  Proceed? (y/N) y                                                         ║
-║                                                                            ║
-║  [•••] Executing command...                                               ║
-║                                                                            ║
-║  Starting Nmap 7.92 ( https://nmap.org )                                  ║
-║  Nmap scan report for example.com                                         ║
-║  Host is up (0.042s latency).                                             ║
-║                                                                            ║
-║  PORT      STATE    SERVICE VERSION                                       ║
-║  22/tcp    open     ssh     OpenSSH 7.4                                   ║
-║  80/tcp    open     http    Apache httpd 2.4.6                            ║
-║  443/tcp   open     https   Apache httpd 2.4.6                            ║
-║                                                                            ║
-║  ✓ Command executed successfully. (Saved to history)                     ║
-║  DestroyGPT >>>                                                           ║
-║                                                                            ║
-╚════════════════════════════════════════════════════════════════════════════╝
-```
+![DestroyGPT Demo](assets/demo.gif)
 
-> **Add a GIF demo here:** Upload a screen recording to your repo assets folder and reference it:  
-> `![DestroyGPT Demo](assets/demo.gif)`
+> Add a GIF demo of the tool in action. Upload screen recording to `assets/demo.gif`
 
 ---
 
 ## 🎯 Overview
 
-DestroyGPT is a secure, AI-assisted terminal tool designed for **penetration testers** and **ethical hackers**. It integrates with **OpenRouter.ai** to leverage advanced language models—DeepSeek-R1, GPT-4o, Grok—for generating security commands, payloads, and exploit strategies.
+DestroyGPT is a secure, AI-assisted terminal tool designed for penetration testers and ethical hackers. It integrates with OpenRouter.ai to leverage advanced language models—DeepSeek-R1, GPT-4o, Grok—for generating security commands, payloads, and exploit strategies.
 
-Unlike traditional CLI tools, DestroyGPT enables **direct command execution** in your terminal while enforcing **multi-layered security mechanisms** to prevent accidental or malicious damage.
-
----
-
-## ✨ Features
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    🔐 SECURITY FIRST                             │
-├─────────────────────────────────────────────────────────────────┤
-│  ✓ Whitelist Enforcement                                         │
-│  ✓ Blacklist Pattern Detection                                   │
-│  ✓ Danger Keyword Alerts                                         │
-│  ✓ Docker Sandbox Isolation                                      │
-│  ✓ Interactive Confirmation                                      │
-└─────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────┐
-│                   🚀 POWERFUL CAPABILITIES                        │
-├─────────────────────────────────────────────────────────────────┤
-│  ⚡ Multi-Model LLM Support (GPT-4o, DeepSeek-R1, Grok)         │
-│  ⚡ Streaming AI Responses                                        │
-│  ⚡ Command History (Up to 5,000 commands)                        │
-│  ⚡ Rotating Audit Logs                                           │
-│  ⚡ Dry-Run Mode for Validation                                   │
-│  ⚡ Timeout & Interrupt Protection                                │
-└─────────────────────────────────────────────────────────────────┘
-```
+The tool enables direct command execution in your terminal while enforcing multi-layered security mechanisms to prevent accidental or malicious damage.
 
 ---
 
@@ -148,18 +81,14 @@ DestroyGPT >>> Create a brute-force script for SSH
 
 ### 🛠️ Special Commands
 
-```
-╔════════════════════════════════════════════════════════════════╗
-║  COMMAND                  │  DESCRIPTION                        ║
-╠════════════════════════════════════════════════════════════════╣
-║  cmd: <command>           │  Execute system command directly    ║
-║  help                     │  Show available commands            ║
-║  history                  │  View command history              ║
-║  clear                    │  Clear screen                       ║
-║  exit / quit              │  Terminate session                  ║
-║  dry-run <command>        │  Preview without executing          ║
-╚════════════════════════════════════════════════════════════════╝
-```
+| Command | Description |
+|---------|-------------|
+| `cmd: <command>` | Execute system command directly |
+| `help` | Show available commands |
+| `history` | View command history |
+| `clear` | Clear screen |
+| `exit` / `quit` | Terminate session |
+| `dry-run <command>` | Preview without executing |
 
 ### 💡 Example Workflows
 
@@ -180,51 +109,16 @@ Proceed? (y/N) y
 
 ---
 
-## 🛡️ Security Architecture
+## 🛡️ Security
 
-```
-                    ┌─────────────────────┐
-                    │   User Input        │
-                    └──────────┬──────────┘
-                               │
-                    ┌──────────▼──────────┐
-                    │  Layer 1: Whitelist │◄────✓ nmap, curl, ssh
-                    └──────────┬──────────┘     ✗ Unknown tools
-                               │
-                    ┌──────────▼──────────┐
-                    │ Layer 2: Blacklist  │◄────✗ rm -rf /, mkfs
-                    └──────────┬──────────┘     ✗ Fork bombs
-                               │
-                    ┌──────────▼──────────┐
-                    │ Layer 3: Keywords   │◄────⚠️  Dangerous patterns
-                    └──────────┬──────────┘     ➜ Manual confirm
-                               │
-                    ┌──────────▼──────────┐
-                    │  Layer 4: Sandbox   │◄────🐳 Optional Docker
-                    └──────────┬──────────┘     🐳 Ubuntu 22.04
-                               │
-                    ┌──────────▼──────────┐
-                    │ Layer 5: Execution  │◄────⏱️  Timeout: 300s
-                    └──────────┬──────────┘     📝 Logging
-                               │
-                    ┌──────────▼──────────┐
-                    │   Command Output    │
-                    └─────────────────────┘
-```
+DestroyGPT implements defense-in-depth security with multiple protective layers:
 
----
-
-## 📊 Safety Matrix
-
-| Component | Protection | Status |
-|-----------|-----------|--------|
-| **Whitelist** | Only approved tools | ✅ Enabled |
-| **Blacklist** | Dangerous patterns blocked | ✅ Enabled |
-| **Keywords** | Manual confirmation | ✅ Interactive |
-| **Sandbox** | Docker isolation | ⚙️ Optional |
-| **Timeouts** | Process limits (300s) | ✅ Enabled |
-| **Logging** | Audit trail | ✅ Rotating logs |
-| **History** | Command storage | ✅ 5,000 max |
+- **Whitelist Enforcement** – Only approved tools are permitted
+- **Blacklist Detection** – Dangerous patterns are automatically blocked
+- **Keyword Analysis** – Sensitive commands trigger manual confirmation
+- **Docker Sandbox** – Optional isolated container execution
+- **Timeout Protection** – Auto-terminates long-running processes
+- **Comprehensive Logging** – Full audit trail of all activities
 
 ---
 
@@ -247,39 +141,21 @@ Create a `config.json` for advanced settings:
 
 ---
 
-## 📚 Examples
-
-### Penetration Testing
-```bash
-DestroyGPT >>> Scan for vulnerabilities on example.com
-DestroyGPT >>> Generate exploit payload for CVE-2021-44228
-DestroyGPT >>> Create network reconnaissance script
-```
-
-### Security Research
-```bash
-DestroyGPT >>> Analyze malware sandbox output
-DestroyGPT >>> Generate payload for privilege escalation testing
-DestroyGPT >>> Create fuzzing scripts
-```
-
----
-
 ## 🐛 Troubleshooting
 
-**Issue: API Key Not Found**
+**API Key Not Found**
 ```bash
 ✗ Error: OPENROUTER_API_KEY not configured
 ✓ Solution: Set ~/.destroygpt_api_key or export OPENROUTER_API_KEY
 ```
 
-**Issue: Docker Sandbox Unavailable**
+**Docker Sandbox Unavailable**
 ```bash
 ⚠️  Warning: Docker not detected. Sandbox mode disabled.
 ✓ Solution: Install Docker or disable sandbox requirement
 ```
 
-**Issue: Command Timeout**
+**Command Timeout**
 ```bash
 ⏱️  Timeout: Command exceeded 300 seconds
 ✓ Solution: Increase execution_timeout in config.json
@@ -289,47 +165,17 @@ DestroyGPT >>> Create fuzzing scripts
 
 ## ⚠️ Legal & Ethical Notice
 
-```
-╔═══════════════════════════════════════════════════════════════════╗
-║                      ⚠️  IMPORTANT DISCLAIMER                     ║
-╠═══════════════════════════════════════════════════════════════════╣
-║                                                                   ║
-║  This tool is EXCLUSIVELY for:                                    ║
-║  ✓ Authorized penetration testing                                 ║
-║  ✓ Legitimate security research                                   ║
-║  ✓ Educational purposes                                           ║
-║                                                                   ║
-║  UNAUTHORIZED ACCESS IS ILLEGAL                                   ║
-║  • Violates Computer Fraud & Abuse Act (CFAA)                    ║
-║  • Subject to criminal penalties                                  ║
-║  • User assumes ALL liability                                     ║
-║                                                                   ║
-║  By using DestroyGPT, you agree to use it ONLY for authorized    ║
-║  activities and comply with all applicable laws and regulations.  ║
-║                                                                   ║
-╚═══════════════════════════════════════════════════════════════════╝
-```
+This tool is **exclusively for authorized penetration testing, legitimate security research, and educational purposes**.
+
+**Unauthorized access to computer systems is illegal** and subject to criminal penalties. By using DestroyGPT, you agree to use it only for authorized activities and comply with all applicable laws and regulations in your jurisdiction.
+
+The author assumes no liability for misuse or any resulting damages.
 
 ---
 
 ## 📜 License
 
 Licensed under the **MIT License** – see [LICENSE](LICENSE) for full details.
-
-```
-MIT License
-
-Copyright (c) 2024 Sujal Lamichhane
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-```
 
 ---
 
@@ -339,7 +185,6 @@ copies or substantial portions of the Software.
 - 📖 [Documentation](https://github.com/sujallamichhane18/DestroyGPT/wiki)
 - 🐛 [Report Issues](https://github.com/sujallamichhane18/DestroyGPT/issues)
 - 💬 [Discussions](https://github.com/sujallamichhane18/DestroyGPT/discussions)
-- ⭐ [Support this Project](https://github.com/sujallamichhane18/DestroyGPT/stargazers)
 
 ---
 
@@ -355,10 +200,4 @@ We welcome contributions! Please:
 
 ---
 
-```
-╔════════════════════════════════════════════════════════════════════╗
-║                    Built by Sujal Lamichhane                       ║
-║               For ethical hackers and security pros                 ║
-║                     Use responsibly. Stay safe.                     ║
-╚════════════════════════════════════════════════════════════════════╝
-```
+**Built for ethical hackers and security professionals. Use responsibly.**

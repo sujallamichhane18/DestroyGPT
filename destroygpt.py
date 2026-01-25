@@ -80,12 +80,24 @@ def call_llm(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> Optional[
         "model": model,
         "messages": [
             {
+                "role": "system",
+                "content": """You are a cybersecurity assistant that suggests Linux/Unix commands.
+User asks a question. You MUST respond with ONLY a single command that answers their question.
+No explanations, no markdown, no code blocks - just the raw command.
+Examples:
+- User: "who are you" -> id
+- User: "what's my IP" -> hostname -I
+- User: "list network connections" -> netstat -tuln
+- User: "scan subnet" -> nmap -sn 192.168.1.0/24
+- User: "find open ports" -> nmap -p- localhost"""
+            },
+            {
                 "role": "user",
                 "content": prompt
             }
         ],
-        "temperature": 0.7,
-        "max_tokens": 1000,
+        "temperature": 0.3,
+        "max_tokens": 100,
         "stream": True
     }
     
@@ -117,7 +129,7 @@ def call_llm(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> Optional[
                         pass
         
         console.print()
-        return "".join(response_text)
+        return "".join(response_text).strip()
     
     except requests.Timeout:
         console.print("[red]✗ Request timed out[/]")
@@ -196,6 +208,14 @@ def main():
  ##    ##  ##  ""##  ##           ##    
  ##mmm##    ##mmm##  ##           ##    
  """""        """"   ""           ""    
+                                        
+ mmmmm        mmmm   mmmmmm    mmmmmmmm 
+ ##"""##    ##""""#  ##""""#m  """##""" 
+ ##    ##  ##        ##    ##     ##    
+ ##    ##  ##  mmmm  ######"      ##    
+ ##    ##  ##  ""##  ##           ##    
+ ##mmm##    ##mmm##  ##           ##    
+ """""        """"   ""           ""    
 
     [bold cyan]AI-Powered Ethical Hacking Assistant[/]
     [bold yellow]v5.0 Minimal Edition[/]
@@ -204,6 +224,10 @@ def main():
     [cyan]GitHub: sujallamichhane18/DestroyGPT[/]
     """
     console.print(banner)
+    console.print("[red bold]⚠️  ETHICAL HACKING WARNING ⚠️[/]\n")
+    console.print("[red]This tool is designed for AUTHORIZED penetration testing and security research ONLY.[/]")
+    console.print("[red]Unauthorized access to computer systems is ILLEGAL and punishable by law.[/]")
+    console.print("[red]You are responsible for your actions. Use responsibly and ethically.[/]\n")
     console.print("[dim]Type 'help' for commands, 'exit' to quit\n[/]")
     
     # Single command mode
@@ -266,28 +290,18 @@ Ask anything:
             # Ask LLM for command suggestion
             console.print("[dim]Thinking...[/]")
             
-            llm_prompt = f"""You are a cybersecurity assistant. The user asked:
-"{prompt}"
-
-Suggest ONE Linux security command to help with this task. 
-Reply with ONLY the command, nothing else. No explanation, no markdown.
-Make sure the command is safe and uses only common tools like nmap, dig, curl, grep, etc.
-
-Command:"""
-            
-            response = call_llm(api_key, llm_prompt, args.model)
+            response = call_llm(api_key, prompt, args.model)
             
             if not response:
                 continue
             
-            # Extract command from response
-            cmd = response.strip().split('\n')[0].strip()
+            # Extract command from response (clean it up)
+            cmd = response.strip()
+            cmd = cmd.replace("```bash", "").replace("```", "").replace("```sh", "")
+            cmd = cmd.split('\n')[0].strip()
             
-            # Remove markdown code blocks if present
-            cmd = cmd.replace("```bash", "").replace("```", "").strip()
-            
-            if not cmd:
-                console.print("[red]✗ No command suggested[/]")
+            if not cmd or cmd.lower() in ("no command", "n/a", "none"):
+                console.print("[red]✗ No command available[/]")
                 continue
             
             # Show command

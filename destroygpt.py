@@ -31,7 +31,7 @@ HISTORY_FILE = HOME / ".destroygpt_history.json"
 LOG_FILE = HOME / ".destroygpt.log"
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "openai/gpt-oss-20b"
+DEFAULT_MODEL = "openai/gpt-4o-mini"
 
 # Timeout settings
 STREAM_TIMEOUT = 60
@@ -187,24 +187,21 @@ def main():
     
     history = load_history()
     
-    # Welcome message
-    banner = """
-    ╔═══════════════════════════════════════════════════════════════╗
-    ║                                                               ║
-    ║     ██████╗ ███████╗███████╗████████╗██████╗  ██████╗ ██╗   ║
-    ║     ██╔══██╗██╔════╝██╔════╝╚══██╔══╝██╔══██╗██╔═══██╗██║   ║
-    ║     ██║  ██║█████╗  ███████╗   ██║   ██████╔╝██║   ██║██║   ║
-    ║     ██║  ██║██╔══╝  ╚════██║   ██║   ██╔══██╗██║   ██║██║   ║
-    ║     ██████╔╝███████╗███████║   ██║   ██║  ██║╚██████╔╝██║   ║
-    ║     ╚═════╝ ╚══════╝╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚═╝   ║
-    ║                                                               ║
-    ║              AI-Powered Ethical Hacking Assistant             ║
-    ║                      v5.0 Minimal Edition                     ║
-    ║                                                               ║
-    ║                  Made by: Sujal Lamichhane                    ║
-    ║              GitHub: sujallamichhane18/DestroyGPT            ║
-    ║                                                               ║
-    ╚═══════════════════════════════════════════════════════════════╝
+    # Welcome message with custom banner
+    banner = r"""
+ mmmmm        mmmm   mmmmmm    mmmmmmmm 
+ ##"""##    ##""""#  ##""""#m  """##""" 
+ ##    ##  ##        ##    ##     ##    
+ ##    ##  ##  mmmm  ######"      ##    
+ ##    ##  ##  ""##  ##           ##    
+ ##mmm##    ##mmm##  ##           ##    
+ """""        """"   ""           ""    
+                                        
+    [bold cyan]AI-Powered Ethical Hacking Assistant[/]
+    [bold yellow]v5.0 Minimal Edition[/]
+    
+    [bold green]Made by: Sujal Lamichhane[/]
+    [cyan]GitHub: sujallamichhane18/DestroyGPT[/]
     """
     console.print(banner)
     console.print("[dim]Type 'help' for commands, 'exit' to quit\n[/]")

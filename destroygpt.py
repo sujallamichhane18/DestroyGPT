@@ -73,38 +73,66 @@ def is_safe(cmd: str) -> bool:
 
 # ─── LLM CALL ────────────────────────────────────────────────────
 
-def call_llm(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> Optional[str]:
-    """Call OpenRouter API and stream response"""
+def call_llm(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> Optional[Tuple[str, str]]:
+    """Call OpenRouter API with retry logic - returns (command, explanation)"""
+    
+    system_prompt = """You are an AI Security Assistant that helps with ethical hacking and penetration testing.
+For each user request, provide:
+1. A practical Linux command to accomplish the task
+2. A brief explanation of what it does and why
+
+Format your response EXACTLY as:
+COMMAND: <the actual command>
+EXPLANATION: <what it does and how it helps>
+
+Examples:
+
+User: scan example.com for open ports
+COMMAND: nmap -sV -p- example.com
+EXPLANATION: This uses nmap to scan all 65535 ports (-p-) on example.com and identify services (-sV). Helps identify exposed services and vulnerabilities.
+
+User: check ssl certificate
+COMMAND: openssl s_client -connect example.com:443 -showcerts
+EXPLANATION: This connects to the target on port 443 and displays the SSL certificate chain. Helps check cert validity, expiration, and cipher strength.
+
+User: find subdomains
+COMMAND: dnsrecon -d example.com -t std
+EXPLANATION: Performs DNS enumeration to discover subdomains. Critical for reconnaissance as subdomains often have weaker security.
+
+User: osint on target
+COMMAND: whois example.com && curl -s https://api.shodan.io/shodan/host/1.1.1.1 2>/dev/null
+EXPLANATION: Gathers WHOIS data and Shodan info. Useful for finding registered details, IP history, and exposed services.
+
+User: check http headers
+COMMAND: curl -I https://example.com
+EXPLANATION: Displays HTTP response headers which may reveal server version, security headers, or misconfigurations.
+
+User: enumerate dns records
+COMMAND: dig example.com ANY
+EXPLANATION: Shows all DNS records (A, MX, TXT, NS). Reveals email servers, name servers, and SPF/DKIM configuration.
+
+User: reverse ip lookup
+COMMAND: nslookup -type=PTR 8.8.8.8
+EXPLANATION: Performs reverse DNS lookup. Helps identify hostnames associated with IPs.
+
+User: trace network path
+COMMAND: traceroute example.com
+EXPLANATION: Shows network hops to target. Helps identify infrastructure and potential filtering points.
+
+User: check for sql injection
+COMMAND: sqlmap -u "http://example.com/search?q=test" --batch
+EXPLANATION: Automated SQL injection detection. Scans parameters for SQL injection vulnerabilities.
+
+Always provide both command AND explanation."""
     
     payload = {
         "model": model,
         "messages": [
-            {
-                "role": "system",
-                "content": """You are a Linux command assistant. User asks a question about a target.
-Respond with ONLY a single shell command. Nothing else.
-- No explanations
-- No markdown 
-- No code blocks
-- Just the raw command
-
-Examples:
-- "check ssl on example.com" -> openssl s_client -connect example.com:443
-- "scan ports on 192.168.1.1" -> nmap -p- 192.168.1.1
-- "check DNS for example.com" -> dig example.com
-- "test HTTP headers" -> curl -I https://example.com
-- "enumerate subdomains" -> dnsrecon -d example.com -a
-
-IMPORTANT: Always provide a command, never say "I can't" or similar."""
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
         ],
-        "temperature": 0.2,
-        "max_tokens": 150,
-        "stream": False
+        "temperature": 0.1,
+        "max_tokens": 300
     }
     
     headers = {
@@ -120,18 +148,40 @@ IMPORTANT: Always provide a command, never say "I can't" or similar."""
             return None
         
         data = response.json()
-        content = data["choices"][0]["message"]["content"].strip()
         
-        if content:
-            console.print(content, style="cyan")
+        # Extract content safely
+        if "choices" in data and len(data["choices"]) > 0:
+            choice = data["choices"][0]
+            if "message" in choice and "content" in choice["message"]:
+                content = choice["message"]["content"].strip()
+                if content:
+                    # Parse COMMAND and EXPLANATION
+                    command = ""
+                    explanation = ""
+                    
+                    lines = content.split('\n')
+                    for line in lines:
+                        if line.startswith("COMMAND:"):
+                            command = line.replace("COMMAND:", "").strip()
+                        elif line.startswith("EXPLANATION:"):
+                            explanation = line.replace("EXPLANATION:", "").strip()
+                    
+                    if command and explanation:
+                        return (command, explanation)
+                    elif command:
+                        return (command, "")
         
-        return content
+        console.print("[red]✗ Invalid response format[/]")
+        return None
     
     except requests.Timeout:
-        console.print("[red]✗ API timeout[/]")
+        console.print("[red]✗ Request timeout - try again[/]")
+        return None
+    except json.JSONDecodeError:
+        console.print("[red]✗ Invalid response format[/]")
         return None
     except Exception as e:
-        console.print(f"[red]✗ Error: {e}[/]")
+        console.print(f"[red]✗ Error: {str(e)[:50]}[/]")
         return None
 
 # ─── COMMAND EXECUTION ───────────────────────────────────────────
@@ -199,31 +249,18 @@ def main():
     banner = """
     ╔════════════════════════════════════════════════════════════════╗
     ║                                                                ║
-    ║                                                                ║
-    ║                                                               
-                  ▄▄▄▄▄        ▄▄▄▄   ▄▄▄▄▄▄    ▄▄▄▄▄▄▄▄ 
-                  ██▀▀▀██    ██▀▀▀▀█  ██▀▀▀▀█▄  ▀▀▀██▀▀▀ 
-                  ██    ██  ██        ██    ██     ██    
-                  ██    ██  ██  ▄▄▄▄  ██████▀      ██    
-                  ██    ██  ██  ▀▀██  ██           ██    
-                  ██▄▄▄██    ██▄▄▄██  ██           ██    
-                   ▀▀▀▀▀       ▀▀▀▀   ▀▀           ▀▀    
-                                        
-                                                                     ║
-    ║                                                                ║
-    ║                                                                ║
-    ║                                                                ║
-    ║                                                                ║
-    ║                                                                ║
-    ║                                                                ║
-    ║                                                                ║
-    ║                                                                ║
+    ║   ██████╗  ██████╗ ██████╗ ████████╗                           ║
+    ║   ██╔══██╗██╔════╝██╔════╝ ╚══██╔══╝                           ║
+    ║   ██║  ██║██║     ██║        ██║                              ║
+    ║   ██║  ██║██║     ██║        ██║                              ║
+    ║   ██████╔╝╚██████╗╚██████╗   ██║                              ║
+    ║   ╚═════╝  ╚═════╝ ╚═════╝   ╚═╝                              ║
     ║                                                                ║
     ║              AI-Powered Ethical Hacking Tool                   ║
     ║                 v5.0 Minimal & Powerful                        ║
     ║                                                                ║
     ║              Author: Sujal Lamichhane                          ║
-    ║          GitHub: sujallamichhane18/DestroyGPT                  ║
+    ║          GitHub: sujallamichhane18/DestroyGPT                 ║
     ║                                                                ║
     ╚════════════════════════════════════════════════════════════════╝
     """
@@ -247,7 +284,7 @@ def main():
     # Interactive loop
     while True:
         try:
-            prompt = console.input("[bold cyan]dgpt>[/] ")
+            prompt = console.input("[bold magenta]🔓 hacker[/bold magenta]@[bold cyan]dgpt[/bold cyan] $ ")
             
             if not prompt.strip():
                 continue
@@ -262,26 +299,40 @@ def main():
             
             if prompt.lower() == "help":
                 help_text = """
-Commands:
-  help              - Show this help
-  history           - Show command history
-  clear             - Clear screen
-  exit              - Exit program
-
-Ask anything:
-  dgpt> scan example.com with nmap
-  dgpt> check SSL on example.com
-  dgpt> enumerate DNS for example.com
+╔════════════════════════════════════════════════════════════════╗
+║                    DGPT - HACKING COMMANDS                    ║
+╠════════════════════════════════════════════════════════════════╣
+║                                                                ║
+║  help              Show this help menu                         ║
+║  history           Show last 10 commands                       ║
+║  clear             Clear screen                               ║
+║  exit              Exit program                               ║
+║                                                                ║
+║  USAGE: Ask anything about hacking/security:                  ║
+║                                                                ║
+║  Examples:                                                     ║
+║    $ scan 192.168.1.1 for open ports                          ║
+║    $ check ssl on example.com                                 ║
+║    $ enumerate dns for example.com                            ║
+║    $ find subdomains of example.com                           ║
+║    $ osint sujallamichhane                                    ║
+║    $ check http headers for example.com                       ║
+║    $ reverse lookup 8.8.8.8                                   ║
+║    $ trace route to example.com                               ║
+║                                                                ║
+╚════════════════════════════════════════════════════════════════╝
                 """
                 console.print(help_text)
                 continue
             
             if prompt.lower() == "history":
                 if history:
+                    console.print("\n[bold cyan]═══ COMMAND HISTORY ═══[/bold cyan]\n")
                     for i, h in enumerate(history[-10:], 1):
-                        console.print(f"{i}. {h}")
+                        console.print(f"[dim][{i}][/dim] {h}")
+                    console.print()
                 else:
-                    console.print("[dim]No history[/]")
+                    console.print("[dim]No history[/dim]\n")
                 continue
             
             if prompt.lower() == "clear":
@@ -292,44 +343,51 @@ Ask anything:
             history.append(prompt)
             
             # Ask LLM for command suggestion
-            console.print("[dim]Thinking...[/]")
+            console.print("[bold cyan]⚙️  Processing...[/bold cyan]")
             
             response = call_llm(api_key, prompt, args.model)
             
             if not response:
                 continue
             
-            # Extract command from response (clean it up)
+            # Clean up response
             cmd = response.strip()
-            cmd = cmd.replace("```bash", "").replace("```", "").replace("```sh", "")
+            # Remove markdown code blocks
+            cmd = cmd.replace("```bash", "").replace("```sh", "").replace("```", "").strip()
+            # Get first line only
             cmd = cmd.split('\n')[0].strip()
             
-            if not cmd or cmd.lower() in ("no command", "n/a", "none"):
-                console.print("[red]✗ No command available[/]")
+            if not cmd or cmd.lower() in ("sorry", "i can't", "n/a", "none", "command:"):
+                console.print("[red]✗ Unable to generate command[/]")
                 continue
             
-            # Show command
-            console.print(f"[yellow]→ {cmd}[/]")
+            # Show the command
+            console.print(f"\n[bold green]✓ Suggested Command:[/bold green]")
+            console.print(f"[bold yellow]  $ {cmd}[/bold yellow]\n")
             
-            # Safety check
-            if not is_safe(cmd):
-                console.print("[red]✗ Command blocked (unsafe)[/]")
+            # Ask for execution
+            try:
+                execute = console.input("[bold cyan]Execute this command?[/] [y/N] ").lower().strip()
+            except:
+                execute = "n"
+            
+            if execute != "y":
+                console.print()
                 continue
             
-            # Execute
-            if console.input("[bold cyan]Execute?[/] [y/n] ").lower() == 'y':
-                console.print()
-                stdout, stderr, code = run_cmd(cmd, args.dry_run)
-                
-                if stdout:
-                    console.print(stdout)
-                if stderr:
-                    console.print(f"[red]{stderr}[/]")
-                
-                console.print()
+            # Execute command
+            console.print("\n[bold cyan]▶ Running...[/bold cyan]\n")
+            stdout, stderr, code = run_cmd(cmd, args.dry_run)
+            
+            if stdout:
+                console.print(f"[green]{stdout}[/green]")
+            if stderr:
+                console.print(f"[red]{stderr}[/red]")
+            
+            console.print()
         
         except KeyboardInterrupt:
-            console.print("\n[yellow]Interrupted[/]")
+            console.print("\n[yellow]⏹ Interrupted by user[/yellow]")
             break
         except Exception as e:
             console.print(f"[red]Error: {e}[/]")

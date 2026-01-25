@@ -1083,13 +1083,99 @@ async def main_loop(session: Session, config: Config, args) -> None:
         border_style="blue"
     ))
 
-    autonomous = Confirm.ask("Autonomous mode?", default=False)
+    # Interactive target selection
+    console.print(Panel(
+        "[bold cyan]Welcome to DestroyGPT v4.0 Enterprise[/]\n"
+        "[yellow]Powerful AI-Driven Penetration Testing Platform[/]",
+        title="DestroyGPT",
+        border_style="green"
+    ))
+    
+    # Check if continuing existing session
+    if session.target:
+        console.print(f"\n[cyan]Previous target found: {session.target}[/]")
+        if not Confirm.ask("Continue with this target?", default=True):
+            session.target = ""
+            session.phase = "profile"
+            session.current_agent = "profile"
+    
+    # Get new target if needed
+    if not session.target:
+        console.print("\n[bold cyan]═══════════════════════════════════════════════════════[/]")
+        console.print("[bold yellow]TARGET SELECTION[/]")
+        console.print("[bold cyan]═══════════════════════════════════════════════════════[/]\n")
+        
+        console.print("Enter target to scan:")
+        console.print("[cyan]Examples:[/] example.com, 192.168.1.0/24, 10.0.0.1")
+        console.print("[cyan]Or press Enter to use interactive menu[/]\n")
+        
+        target_input = Prompt.ask("[bold green]Target[/]").strip()
+        
+        if target_input:
+            session.target = target_input
+        else:
+            # Interactive menu
+            console.print("\n[bold cyan]Quick Target Templates:[/]\n")
+            templates = {
+                "1": {"name": "Single Domain", "example": "example.com"},
+                "2": {"name": "Single IP", "example": "192.168.1.1"},
+                "3": {"name": "IP Range (CIDR)", "example": "192.168.1.0/24"},
+                "4": {"name": "Multiple Domains", "example": "example.com, test.com"},
+                "5": {"name": "Custom", "example": "Enter manually"},
+            }
+            
+            for key, val in templates.items():
+                console.print(f"  [{cyan}{key}[/cyan}] {val['name']:<25} ({val['example']})")
+            
+            choice = Prompt.ask("\n[bold]Select option[/]", choices=["1", "2", "3", "4", "5"], default="1")
+            
+            if choice == "1":
+                session.target = Prompt.ask("[bold]Enter domain[/]", default="example.com").strip()
+            elif choice == "2":
+                session.target = Prompt.ask("[bold]Enter IP address[/]", default="192.168.1.1").strip()
+            elif choice == "3":
+                session.target = Prompt.ask("[bold]Enter IP range (CIDR)[/]", default="192.168.1.0/24").strip()
+            elif choice == "4":
+                session.target = Prompt.ask("[bold]Enter domains (comma-separated)[/]", default="example.com, test.com").strip()
+            else:
+                session.target = Prompt.ask("[bold]Enter custom target[/]").strip()
+        
+        if not session.target:
+            console.print("[red]✗ No target specified. Exiting.[/]")
+            return
+        
+        console.print(f"\n[green]✓ Target set to: {session.target}[/]\n")
+        session.save()
+        await send_webhook_notification(config, session, "session_started")
+    
+    # Select mode
+    console.print("\n[bold cyan]═══════════════════════════════════════════════════════[/]")
+    console.print("[bold yellow]EXECUTION MODE[/]")
+    console.print("[bold cyan]═══════════════════════════════════════════════════════[/]\n")
+    
+    console.print("[cyan]1. Autonomous Mode[/cyan]   - Fully automated, minimal prompts")
+    console.print("[cyan]2. Interactive Mode[/cyan]  - Get prompted for each step")
+    console.print("[cyan]3. Advanced Mode[/cyan]     - Fine-grained control")
+    
+    mode = Prompt.ask("\n[bold]Select mode[/]", choices=["1", "2", "3"], default="1")
+    
+    if mode == "1":
+        autonomous = True
+        advanced = False
+    elif mode == "2":
+        autonomous = False
+        advanced = False
+    else:
+        autonomous = False
+        advanced = True
 
     while True:
         if not session.target:
-            session.target = Prompt.ask("[bold]Set target (domain/IP)[/]").strip()
-            session.save()
-            await send_webhook_notification(config, session, "session_started")
+            console.print(f"\n[cyan]Current target: {session.target}[/]")
+            change = Confirm.ask("Change target?", default=False)
+            if change:
+                session.target = Prompt.ask("[bold]New target[/]").strip()
+                session.save()
             continue
 
         user_msg = "Continue." if autonomous else Prompt.ask("[bold cyan]You >>>[/]").strip()
@@ -1097,7 +1183,7 @@ async def main_loop(session: Session, config: Config, args) -> None:
         if user_msg.lower() in ("exit", "quit", "q"):
             if session.raw_outputs:
                 report = generate_advanced_vapt_report(session)
-                report_path = REPORT_DIR / f"report_{session.target.replace('.', '_')}_{datetime.now():%Y%m%d_%H%M}.md"
+                report_path = REPORT_DIR / f"report_{session.target.replace('.', '_').replace('/', '_')}_{datetime.now():%Y%m%d_%H%M}.md"
                 report_path.write_text(report)
                 console.print(f"\n[green]✓ Report saved → {report_path}[/]")
                 await send_webhook_notification(config, session, "report_generated")
@@ -1122,6 +1208,76 @@ async def main_loop(session: Session, config: Config, args) -> None:
                 console.print(table)
             else:
                 console.print("[yellow]No findings yet[/]")
+            continue
+        
+        if user_msg.lower() == "target":
+            console.print(f"\n[cyan]Current target: {session.target}[/]")
+            console.print("[cyan]Options:[/]")
+            console.print("  1. Change target")
+            console.print("  2. View target info")
+            console.print("  3. Continue")
+            choice = Prompt.ask("[bold]Select[/]", choices=["1", "2", "3"], default="3")
+            
+            if choice == "1":
+                session.target = Prompt.ask("[bold]New target[/]").strip()
+                session.phase = "profile"
+                session.current_agent = "profile"
+                session.save()
+                console.print(f"[green]✓ Target changed to: {session.target}[/]")
+            elif choice == "2":
+                info = f"""
+Target Information:
+─────────────────────
+Target: {session.target}
+Phase: {session.phase}
+Agent: {session.current_agent}
+Commands Executed: {session.metrics['commands_executed']}
+Findings: {session.metrics['vulnerabilities_found']}
+Duration: {session.metrics['total_duration']:.2f}s
+                """
+                console.print(Panel(info, title="Target Info", border_style="blue"))
+            continue
+        
+        if user_msg.lower() == "help":
+            help_text = """
+Available Commands:
+──────────────────────────────
+[cyan]report[/]     - Generate VAPT report
+[cyan]findings[/]   - View identified vulnerabilities
+[cyan]target[/]     - Change/view target
+[cyan]help[/]       - Show this help
+[cyan]metrics[/]    - View session metrics
+[cyan]clear[/]      - Clear screen
+[cyan]exit/quit[/]  - Save and exit
+
+During Scanning:
+──────────────────────────────
+[cyan]y[/] - Execute commands
+[cyan]n[/] - Skip commands
+[cyan]q[/] - Quit session
+            """
+            console.print(Panel(help_text, title="Help Menu", border_style="green"))
+            continue
+        
+        if user_msg.lower() == "metrics":
+            metrics_text = f"""
+Session Metrics:
+────────────────────────
+Session ID: {session.id}
+Target: {session.target}
+Phase: {session.phase}
+Commands Executed: {session.metrics['commands_executed']}
+Vulnerabilities Found: {session.metrics['vulnerabilities_found']}
+Total Duration: {session.metrics['total_duration']:.2f}s
+Commands in History: {len(session.raw_outputs)}
+Findings in DB: {len(session.findings)}
+Started: {session.metrics['start_time']}
+            """
+            console.print(Panel(metrics_text, title="Metrics", border_style="yellow"))
+            continue
+        
+        if user_msg.lower() == "clear":
+            console.clear()
             continue
 
         # Get LLM response

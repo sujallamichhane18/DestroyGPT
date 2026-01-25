@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 DestroyGPT v5.0 - Minimal & Functional Shell-based Hacking Assistant
- Simple, Fast, Effective , Free
+Inspired by ShellGPT - Simple, Fast, Effective
 """
 
 import argparse
@@ -203,22 +203,18 @@ def main():
     banner = """
     ╔════════════════════════════════════════════════════════════════╗
     ║                                                                ║
-    ║                                                            
-                mmmmm        mmmm   mmmmmm    mmmmmmmm 
-                 ##"""##    ##""""#  ##""""#m  """##""" 
-                 ##    ##  ##        ##    ##     ##    
-                 ##    ##  ##  mmmm  ######"      ##    
-                 ##    ##  ##  ""##  ##          ##    
-                 ##mmm##    ##mmm##  ##           ##    
-                   """""      """"   ""           ""                               
-    ║
-    ║
+    ║   ██████╗  ██████╗ ██████╗ ████████╗                           ║
+    ║   ██╔══██╗██╔════╝██╔════╝ ╚══██╔══╝                           ║
+    ║   ██║  ██║██║     ██║        ██║                              ║
+    ║   ██║  ██║██║     ██║        ██║                              ║
+    ║   ██████╔╝╚██████╗╚██████╗   ██║                              ║
+    ║   ╚═════╝  ╚═════╝ ╚═════╝   ╚═╝                              ║
     ║                                                                ║
     ║              AI-Powered Ethical Hacking Tool                   ║
     ║                 v5.0 Minimal & Powerful                        ║
     ║                                                                ║
     ║              Author: Sujal Lamichhane                          ║
-    ║          GitHub: sujallamichhane18/DestroyGPT                  ║
+    ║          GitHub: sujallamichhane18/DestroyGPT                 ║
     ║                                                                ║
     ╚════════════════════════════════════════════════════════════════╝
     """

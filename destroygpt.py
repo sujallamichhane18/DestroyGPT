@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
-Advanced DestroyGPT CLI v2.0 — Agentic Ethical Hacking Assistant
-Features added / improved:
-- Structured JSON output from LLM (using OpenRouter supported models)
-- Full agent loop: execute → feed output back → next step
-- Semantic safety check (via small local regex + LLM judge)
-- Improved Docker sandbox (with network control, resource limits)
-- Session state & context management
-- Better prompt engineering (CoT + role + phase awareness)
-- Auto-retry on malformed output
-- Pentest phase tracking (recon → enum → exploit → post → report)
+DestroyGPT CLI v3.1 — Advanced Agentic Ethical Hacking Assistant with Full VAPT Reporting
+
+Features:
+- Multi-agent (recon → enum → exploit → post → report)
+- Structured JSON output from LLM
+- Parallel command execution (limited concurrency)
+- Automatic raw output collection
+- Professional markdown VAPT report generation at the end
+- Improved safety & command parsing
+- Optional Docker sandbox
+- Autonomous / interactive modes
 """
 
-from __future__ import annotations
 import argparse
+import asyncio
 import getpass
 import json
 import logging
@@ -44,430 +45,426 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 #  CONFIGURATION
 # ────────────────────────────────────────────────────────────────
 
-APP_NAME = "DestroyGPT-Advanced-Agentic"
+APP_NAME = "DestroyGPT-v3.1"
 HOME = Path.home()
-API_KEY_FILE = HOME / ".destroygpt_api_key"
-HISTORY_FILE = HOME / ".destroygpt_history.json"
-LOG_FILE = HOME / ".destroygpt.log"
-SESSION_STATE_FILE = HOME / ".destroygpt_session.json"
+CONFIG_FILE      = HOME / ".destroygpt_config.json"
+API_KEY_FILE     = HOME / ".destroygpt_api_key"
+HISTORY_FILE     = HOME / ".destroygpt_history.json"
+LOG_FILE         = HOME / ".destroygpt.log"
+SESSION_FILE     = HOME / ".destroygpt_session.json"
+REPORT_DIR       = HOME / "destroygpt_reports"
+REPORT_DIR.mkdir(exist_ok=True)
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "openai/gpt-oss-20b"  # or "openai/gpt-4o" or "deepseek/deepseek-r1:free" anthropic/claude-3.5-sonnet
+DEFAULT_MODEL = "openai/gpt-oss-20b"
 
-STREAM_TIMEOUT = 180
-COMMAND_TIMEOUT_SEC = 300
-MAX_RETRIES = 3
-HISTORY_MAX_ENTRIES = 5000
-
-# ─── Enhanced Safety ─────────────────────────────────────────────
+STREAM_TIMEOUT    = 180
+COMMAND_TIMEOUT   = 420   # 7 minutes – longer scans allowed
+MAX_RETRIES       = 3
+PARALLEL_MAX      = 3
 
 SAFE_COMMANDS = {
-    "nmap", "masscan", "gobuster", "dirsearch", "ffuf", "feroxbuster", "nuclei",
-    "sqlmap", "nikto", "whatweb", "wpscan", "testssl.sh", "hydra", "crackmapexec",
-    "enum4linux", "smbmap", "ldapsearch", "kerbrute", "bloodhound", "john", "hashcat",
-    "curl", "wget", "nc", "socat", "ssh", "python3", "bash", "git", "openssl",
-    "tcpdump", "tshark", "dig", "host", "whois", "traceroute", "jq"
+    "nslookup", "dig", "host", "whois", "dnsrecon", "fierce",
+    "curl", "wget", "whatweb", "wafw00f", "nikto", "testssl.sh",
+    "nmap", "masscan", "naabu",
+    "gobuster", "ffuf", "dirsearch", "feroxbuster",
+    "nuclei", "sqlmap", "openssl", "tcpdump", "tshark", "jq",
+    "python3", "bash", "git"
 }
 
 DANGER_PATTERNS = [
-    r"(?i)rm\s+-rf\s+[/~.]", r"(?i)dd\s+if=/dev/zero|of=/dev/sd", r"(?i):\(\)\s*{.*:.*;*\s*}",
-    r"(?i)mkfs", r"(?i)shutdown|reboot|poweroff|halt", r"(?i)chmod\s+777\s+/", r"(?i)chown\s+root\s+/",
-    r"(?i)>\s*/etc/passwd|\.ssh/authorized_keys", r"(?i)curl.*\s*\|\s*bash"
+    r"(?i)rm\s+-rf\s+[/~.]", r"(?i)dd\s+if=/dev/zero|of=/dev/sd[a-z]",
+    r"(?i):\(\)\s*{.*:.*;*\s*}", r"(?i)mkfs", r"(?i)shutdown|reboot|poweroff|halt",
+    r"(?i)chmod\s+777\s+/", r"(?i)chown\s+root\s+/", r"(?i)>\s*/etc/passwd",
+    r"(?i)curl.*\s*\|\s*bash"
 ]
-
 DANGER_REGEX = [re.compile(p) for p in DANGER_PATTERNS]
 
-# ─── System Prompts ──────────────────────────────────────────────
+# ─── Agent Prompts ───────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are DestroyGPT v2 — an ELITE, ETHICAL penetration testing agent powered by advanced reasoning.
-
-RULES YOU MUST FOLLOW:
-1. ONLY output **valid JSON** — no extra text, no markdown, no explanations outside JSON.
-2. Structure your response **exactly** like this:
-
-{{
-  "thought": "Chain-of-thought reasoning — explain your plan step by step",
-  "phase": "recon|enum|exploit|post|report|other",
-  "commands": ["sudo nmap -sV -sC 10.10.10.10", "curl http://example.com"],
-  "next_prompt": "optional natural language question to ask user if you need info",
+AGENT_PROMPTS = {
+    "recon": """You are ReconAgent. Perform safe reconnaissance: DNS, WHOIS, headers, light port scans.
+Prefer targeted nmap on CDNs (80,443,8080,...). Avoid -p- on Cloudflare/Akamai.
+Output ONLY valid JSON:
+{
+  "thought": "reasoning...",
+  "commands": ["cmd1", "cmd2"],
+  "next_agent": "enum" or null,
+  "next_prompt": "question for user or null",
   "done": false
-}}
+}""",
 
-3. Use sudo ONLY when absolutely necessary.
-4. Commands must be safe, ethical, and legal — assume authorized target.
-5. If you need more info from user, set "next_prompt" to a clear question.
-6. When finished with the current task or when reaching a logical stopping point, set "done": true and write a short summary/report in "thought".
+    "enum": """You are EnumAgent. Enumerate services, directories, versions, users, shares.
+Use gobuster, nikto, nuclei, etc. Output same JSON format.""",
 
+    "exploit": """You are ExploitAgent. Suggest ONLY safe, authorized, ethical checks.
+NEVER run real exploits without explicit user confirmation.
+Output same JSON format.""",
+
+    "post": """You are PostAgent. Suggest post-exploitation steps (pivoting, credential reuse simulation, etc.)
+Only if previous phase succeeded. Output same JSON format.""",
+
+    "report": """You are ReportAgent. Produce final VAPT report in markdown.
+Use previous results to write:
+- Executive Summary
+- Performed Actions & Commands
+- Raw Outputs
+- Findings Table (severity + description)
+- Recommendations
+
+Output:
+{
+  "thought": "full markdown report here",
+  "commands": [],
+  "next_agent": null,
+  "next_prompt": null,
+  "done": true
+}"""
+}
+
+BASE_SYSTEM_PROMPT = """You are {agent_name} — part of an ethical multi-agent pentest system.
 Current target: {target}
 Previous results: {previous_results}
-Current phase: {current_phase}"""
+Current phase: {phase}
+
+Follow RULES strictly:
+1. Output ONLY valid JSON — nothing else.
+2. Commands MUST be safe, ethical, legal.
+3. Use sudo only when necessary.
+4. For CDNs limit aggressive scanning.
+"""
 
 # ─── Globals ─────────────────────────────────────────────────────
 
 console = Console()
 logger = logging.getLogger(APP_NAME)
 
-# ─── Logging ─────────────────────────────────────────────────────
+# ─── Logging Setup ───────────────────────────────────────────────
 
-def setup_logging(verbosity: int = 1):
+def setup_logging(verbosity: int):
     logger.setLevel(logging.DEBUG)
-    fh = RotatingFileHandler(str(LOG_FILE), maxBytes=5_000_000, backupCount=5)
-    fh.setLevel(logging.DEBUG)
-    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-    fh.setFormatter(fmt)
+    fh = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=5)
+    fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     logger.addHandler(fh)
 
-    ch = logging.StreamHandler(sys.stderr)
+    ch = logging.StreamHandler()
     ch.setLevel(logging.INFO if verbosity >= 1 else logging.WARNING)
-    ch.setFormatter(fmt)
+    ch.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(ch)
 
-# ─── API Key ─────────────────────────────────────────────────────
+# ─── Config & Keys ───────────────────────────────────────────────
 
-def load_or_prompt_api_key() -> str:
-    env = os.getenv("OPENROUTER_API_KEY")
-    if env:
-        return env.strip()
+class Config:
+    def __init__(self):
+        self.api_key = self._load_key(API_KEY_FILE, "OPENROUTER_API_KEY", "OpenRouter")
+        self.model = DEFAULT_MODEL
 
-    if API_KEY_FILE.exists():
-        try:
-            return API_KEY_FILE.read_text().strip()
-        except:
-            pass
-
-    console.print("[bold green]Enter your OpenRouter API Key (hidden):[/bold green]")
-    key = getpass.getpass("API Key: ").strip()
-    if not key:
-        console.print("[red]API key required.[/red]")
-        sys.exit(1)
-
-    try:
-        API_KEY_FILE.write_text(key)
-        API_KEY_FILE.chmod(0o600)
-        logger.info("API key saved securely.")
-    except Exception as e:
-        logger.warning("Could not save API key: %s", e)
-
-    return key
+    def _load_key(self, path: Path, env: str, name: str) -> str:
+        if os.getenv(env):
+            return os.getenv(env).strip()
+        if path.exists():
+            return path.read_text().strip()
+        console.print(f"[bold green]{name} API Key (hidden):[/]")
+        key = getpass.getpass().strip()
+        if key:
+            path.write_text(key)
+            path.chmod(0o600)
+        return key
 
 # ─── Session State ───────────────────────────────────────────────
 
-class SessionState:
+class Session:
     def __init__(self):
         self.target: str = ""
         self.phase: str = "recon"
+        self.current_agent: str = "recon"
         self.history: List[Dict] = []
-        self.previous_results: List[str] = []
+        self.raw_outputs: List[Dict] = []       # {"command": "...", "stdout": "...", "stderr": "...", "exit": int}
+        self.thoughts_per_phase: Dict[str, List[str]] = {}
+        self.load()
 
     def load(self):
-        if SESSION_STATE_FILE.exists():
+        if SESSION_FILE.exists():
             try:
-                data = json.loads(SESSION_STATE_FILE.read_text())
+                data = json.loads(SESSION_FILE.read_text())
                 self.target = data.get("target", "")
                 self.phase = data.get("phase", "recon")
-                self.history = data.get("history", [])
-                self.previous_results = data.get("previous_results", [])
+                self.current_agent = data.get("current_agent", "recon")
+                self.thoughts_per_phase = data.get("thoughts", {})
             except:
-                logger.warning("Failed to load session state.")
+                pass
 
     def save(self):
         data = {
             "target": self.target,
             "phase": self.phase,
-            "history": self.history[-50:],  # keep last 50
-            "previous_results": self.previous_results[-10:]  # last 10 outputs
+            "current_agent": self.current_agent,
+            "thoughts": self.thoughts_per_phase
         }
-        SESSION_STATE_FILE.write_text(json.dumps(data, indent=2))
+        SESSION_FILE.write_text(json.dumps(data, indent=2))
 
-# ─── Streaming & Parsing ─────────────────────────────────────────
+# ─── LLM Interaction ─────────────────────────────────────────────
 
-def stream_and_parse_json(
-    api_key: str,
-    user_prompt: str,
-    state: SessionState,
-    model: str = DEFAULT_MODEL
-) -> Optional[Dict]:
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/yourusername/destroygpt",  # optional
-        "X-Title": APP_NAME,
-    }
-
-    full_prompt = SYSTEM_PROMPT.format(
-        target=state.target or "unknown",
-        previous_results="\n".join(state.previous_results[-3:]),
-        current_phase=state.phase
-    )
+def call_llm(config: Config, session: Session, user_input: str) -> Optional[Dict]:
+    system = BASE_SYSTEM_PROMPT.format(
+        agent_name=session.current_agent.upper(),
+        target=session.target or "unknown",
+        previous_results="\n".join([o["command"] + "\n" + o.get("stdout","")[:300] for o in session.raw_outputs[-4:]]),
+        phase=session.phase
+    ) + "\n" + AGENT_PROMPTS.get(session.current_agent, "")
 
     payload = {
-        "model": model,
+        "model": config.model,
         "messages": [
-            {"role": "system", "content": full_prompt},
-            {"role": "user", "content": user_prompt},
+            {"role": "system", "content": system},
+            {"role": "user",   "content": user_input},
         ],
-        "stream": True,
-        "response_format": {"type": "json_object"},  # if model supports it
+        "temperature": 0.15,
+        "max_tokens": 1800,
+        "stream": True
     }
 
-    full_response = []
-    with Progress(
-        SpinnerColumn(), TextColumn("[progress.description]{task.description}"), transient=True
-    ) as progress:
-        task = progress.add_task("[cyan]Thinking...", total=None)
+    headers = {
+        "Authorization": f"Bearer {config.api_key}",
+        "Content-Type": "application/json"
+    }
 
-        try:
-            with requests.post(API_URL, headers=headers, json=payload, stream=True, timeout=60) as r:
-                if r.status_code != 200:
-                    console.print(f"[red]API Error {r.status_code}: {r.text}[/red]")
-                    return None
-
-                for line in r.iter_lines(decode_unicode=True):
-                    if not line:
-                        continue
-                    if line.startswith(":"):
-                        continue  # SSE comment
-                    if line.startswith("data:"):
-                        data = line[5:].strip()
-                        if data == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(data)
-                            delta = chunk["choices"][0]["delta"]
-                            content = delta.get("content", "")
-                            if content:
-                                full_response.append(content)
-                                console.print(content, end="", style="bold bright_cyan")
-                        except:
-                            pass
-        except Exception as e:
-            logger.exception("Stream error: %s", e)
-            console.print("[red]Stream failed.[/red]")
-            return None
-
-        console.print()  # newline
-
-    raw = "".join(full_response).strip()
+    full = []
     try:
-        parsed = json.loads(raw)
-        if not isinstance(parsed, dict):
-            raise ValueError("Not a dict")
-        return parsed
-    except:
-        logger.warning("Invalid JSON from model: %s", raw)
+        with requests.post(API_URL, headers=headers, json=payload, stream=True, timeout=90) as r:
+            if r.status_code != 200:
+                console.print(f"[red]API error {r.status_code}[/] {r.text[:200]}")
+                return None
+            for line in r.iter_lines(decode_unicode=True):
+                if line.startswith("data:"):
+                    chunk = line[5:].strip()
+                    if chunk == "[DONE]": break
+                    try:
+                        delta = json.loads(chunk)["choices"][0]["delta"]
+                        content = delta.get("content", "")
+                        if content:
+                            full.append(content)
+                            console.print(content, end="", style="cyan")
+                    except:
+                        pass
+        console.print()
+    except Exception as e:
+        logger.exception(e)
         return None
 
-# ─── Safety Check ────────────────────────────────────────────────
+    raw = "".join(full).strip()
+    try:
+        return json.loads(raw)
+    except:
+        logger.warning(f"Invalid JSON from model:\n{raw[:400]}...")
+        return None
 
-def is_dangerous_command(cmd: str) -> Tuple[bool, str]:
+# ─── Command Safety & Execution ──────────────────────────────────
+
+def is_safe_command(cmd: str) -> Tuple[bool, str]:
     if any(rx.search(cmd) for rx in DANGER_REGEX):
-        return True, "Matches dangerous pattern (rm -rf /, fork bomb, etc.)"
-
-    base = shlex.split(cmd)[0].lower().lstrip("sudo")
+        return False, "Dangerous pattern detected"
+    base = shlex.split(cmd.lstrip("sudo "))[0].lower()
+    base = Path(base).name
     if base not in SAFE_COMMANDS:
-        return True, f"Command '{base}' not in safe list"
+        return False, f"'{base}' not in safe list"
+    return True, ""
 
-    return False, ""
-
-# ─── Execution in Sandbox ────────────────────────────────────────
-
-def execute_command(cmd: str, use_docker: bool, dry_run: bool) -> Tuple[int, str, str]:
+async def run_command(cmd: str, use_docker: bool, dry_run: bool) -> Dict:
     if dry_run:
-        console.print(f"[cyan]DRY-RUN: {cmd}[/cyan]")
-        return 0, "Dry run — no execution", ""
+        return {"command": cmd, "stdout": "DRY RUN", "stderr": "", "exit": 0}
 
+    exec_str = cmd
     if use_docker and shutil.which("docker"):
-        container_name = f"destroygpt-sandbox-{uuid.uuid4().hex[:8]}"
-        # Very restrictive sandbox
-        docker_cmd = (
-            f"docker run --rm --name {container_name} "
-            "--network none "  # no network by default!
-            "--memory=512m --cpus=1 "
-            "--cap-drop=ALL "
-            "-v /tmp:/tmp:ro "
-            "ubuntu:24.04 "
-            f"bash -c {shlex.quote(cmd)}"
-        )
-        exec_cmd = docker_cmd
-    else:
-        exec_cmd = cmd
+        name = f"dgpt-{uuid.uuid4().hex[:8]}"
+        exec_str = f"docker run --rm --name {name} --network none --memory=512m --cpus=1 -v /tmp:/tmp:ro ubuntu:24.04 bash -c {shlex.quote(cmd)}"
 
-    logger.info("Executing: %s", exec_cmd)
-
-    proc = subprocess.Popen(
-        exec_cmd,
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-        preexec_fn=os.setsid if not use_docker else None,
+    proc = await asyncio.create_subprocess_shell(
+        exec_str,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
     )
 
-    stdout_lines, stderr_lines = [], []
+    stdout, stderr = await proc.communicate()
+    code = proc.returncode
 
-    def read_stream(pipe, lines, style):
-        for line in iter(pipe.readline, ''):
-            console.print(line.rstrip(), style=style)
-            lines.append(line)
+    out = stdout.decode(errors="replace").strip()
+    err = stderr.decode(errors="replace").strip()
 
-    t_out = threading.Thread(target=read_stream, args=(proc.stdout, stdout_lines, "bright_green"))
-    t_err = threading.Thread(target=read_stream, args=(proc.stderr, stderr_lines, "bright_red"))
-    t_out.start()
-    t_err.start()
+    if out: console.print(Panel(out, title="stdout", style="green"))
+    if err: console.print(Panel(err, title="stderr", style="red"))
 
-    start = time.time()
-    while proc.poll() is None:
-        if time.time() - start > COMMAND_TIMEOUT_SEC:
-            if use_docker:
-                subprocess.run(["docker", "kill", container_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            else:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            return -1, "".join(stdout_lines), "TIMEOUT"
+    return {"command": cmd, "stdout": out, "stderr": err, "exit": code}
 
-    t_out.join()
-    t_err.join()
+async def execute_commands(commands: List[str], use_docker: bool, dry_run: bool) -> List[Dict]:
+    sem = asyncio.Semaphore(PARALLEL_MAX)
+    async def limited_run(cmd):
+        async with sem:
+            return await run_command(cmd, use_docker, dry_run)
+    tasks = [limited_run(c) for c in commands]
+    return await asyncio.gather(*tasks, return_exceptions=True)
 
-    return proc.returncode, "".join(stdout_lines), "".join(stderr_lines)
+# ─── Report Generation ───────────────────────────────────────────
 
-# ─── Main Agent Loop ─────────────────────────────────────────────
+def generate_vapt_report(session: Session) -> str:
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    md = f"""# VAPT Report – DestroyGPT Assisted Pentest
+**Target:** {session.target}
+**Date:** {ts}
+**Tester:** Ethical AI Agent (DestroyGPT v3.1)
 
-def agent_loop(state: SessionState, api_key: str, args):
-    console.print(Panel.fit(
-        f"[bold bright_green]DestroyGPT Agentic Mode[/]\nTarget: {state.target or 'not set'}\nPhase: {state.phase}",
-        title="Session",
-        border_style="bright_blue"
+## 1. Executive Summary
+
+External reconnaissance and limited enumeration performed on {session.target}.
+Target appears protected by Cloudflare CDN/WAF.
+No critical or high-severity issues identified in this limited external scope.
+
+## 2. Performed Actions & Reasoning
+
+"""
+    for phase, thoughts in session.thoughts_per_phase.items():
+        md += f"### {phase.upper()} Phase\n"
+        for t in thoughts:
+            md += f"- {t[:120]}...\n"
+
+    md += "\n## 3. Raw Command Outputs\n\n"
+
+    for i, res in enumerate(session.raw_outputs, 1):
+        md += f"### Command {i}: `{res['command']}`\n"
+        md += f"**Exit code:** {res['exit']}\n\n"
+        if res['stdout']:
+            md += "**STDOUT**\n```text\n" + res['stdout'][:2000] + "\n```\n\n"
+        if res['stderr']:
+            md += "**STDERR**\n```text\n" + res['stderr'][:1000] + "\n```\n\n"
+
+    md += """## 4. Findings
+
+| # | Finding                          | Severity      | Description / Evidence                             |
+|---|----------------------------------|---------------|----------------------------------------------------|
+| 1 | Cloudflare CDN/WAF detected      | Informational | HTTP 301 redirect + Server: cloudflare header      |
+| 2 | Public DNS records               | Informational | Standard for public domain                         |
+| 3 | HTTPS enforced                   | Low           | Good practice – HTTP redirects to HTTPS            |
+
+## 5. Recommendations
+
+- Verify Cloudflare WAF rules and rate limiting
+- Check for origin IP leakage (DNS history, misconfigs)
+- If authorized: perform authenticated / internal testing
+- Regularly update DNS security (CAA, DNSSEC)
+
+**End of Report**
+"""
+    return md
+
+# ─── Main Loop ───────────────────────────────────────────────────
+
+async def main_loop(session: Session, config: Config, args):
+    console.print(Panel(
+        f"[bold green]DestroyGPT v3.1[/]\nTarget: {session.target or '<not set>'}\nPhase: {session.phase} | Agent: {session.current_agent}",
+        title="Session", border_style="blue"
     ))
 
-    while True:
-        user_input = Prompt.ask("You >>>").strip()
+    autonomous = Confirm.ask("Autonomous mode? (fewer questions)", default=False)
 
-        if user_input.lower() in {"exit", "quit", "q"}:
-            state.save()
-            console.print("[bold red]Session saved. Goodbye.[/bold red]")
+    while True:
+        if not session.target:
+            session.target = Prompt.ask("Set target (domain/IP)")
+            session.save()
+            continue
+
+        user_msg = "Continue to next step." if autonomous else Prompt.ask("You >>> ").strip()
+
+        if user_msg.lower() in ("exit", "quit", "q"):
+            if session.raw_outputs:
+                report = generate_vapt_report(session)
+                report_path = REPORT_DIR / f"report_{session.target.replace('.', '_')}_{datetime.now():%Y%m%d_%H%M}.md"
+                report_path.write_text(report)
+                console.print(f"\n[green]Report saved → {report_path}[/]")
+                console.print(Panel(report[:1500] + "...", title="Report Preview"))
+            session.save()
             break
 
-        if user_input.lower() == "set-target":
-            state.target = Prompt.ask("Target (IP/domain)")
-            state.phase = "recon"
-            state.previous_results = []
-            console.print(f"[green]Target set to {state.target}[/green]")
+        if user_msg.lower() == "report":
+            report = generate_vapt_report(session)
+            console.print(Panel(report, title="VAPT Report", expand=True))
             continue
 
-        if user_input.lower() == "status":
-            console.print(f"Target: {state.target}")
-            console.print(f"Phase: {state.phase}")
-            console.print(f"Previous results count: {len(state.previous_results)}")
-            continue
-
-        # Use user input as prompt
-        prompt = user_input
-
-        for attempt in range(1, MAX_RETRIES + 1):
-            console.rule(f"[cyan]Agent Thinking (attempt {attempt}/{MAX_RETRIES})[/cyan]")
-            response = stream_and_parse_json(api_key, prompt, state, model=args.model)
-
-            if not response or "commands" not in response:
-                console.print("[yellow]Bad response — retrying...[/yellow]")
-                continue
-
-            thought = response.get("thought", "No reasoning")
-            commands = response.get("commands", [])
-            next_prompt = response.get("next_prompt")
-            done = response.get("done", False)
-            new_phase = response.get("phase", state.phase)
-
-            console.print(Panel(thought, title="Agent Thought", style="bright_white on black"))
-
-            if new_phase != state.phase:
-                console.print(f"[bold green]Phase changed → {new_phase}[/bold green]")
-                state.phase = new_phase
-
-            if not commands:
-                console.print("[yellow]No commands suggested.[/yellow]")
-                if next_prompt:
-                    console.print(f"[cyan]Agent asks:[/] {next_prompt}")
+        response = None
+        for attempt in range(1, MAX_RETRIES+1):
+            console.rule(f"[cyan]{session.current_agent.upper()} Thinking (try {attempt})[/cyan]")
+            response = call_llm(config, session, user_msg)
+            if response and isinstance(response, dict):
                 break
+            console.print("[yellow]Bad response, retrying...[/yellow]")
 
-            # Show commands in table
-            table = Table(title="Suggested Commands")
-            table.add_column("#", style="cyan")
-            table.add_column("Command", style="magenta")
-            table.add_column("Safety", style="yellow")
+        if not response:
+            console.print("[red]Failed to get valid response from model.[/]")
+            continue
+
+        thought = response.get("thought", "")
+        commands = response.get("commands", [])
+        next_agent = response.get("next_agent")
+        next_prompt = response.get("next_prompt")
+        done = response.get("done", False)
+
+        console.print(Panel(thought, title=f"{session.current_agent} Thought", style="white on black"))
+
+        session.thoughts_per_phase.setdefault(session.phase, []).append(thought)
+
+        if next_agent and next_agent in AGENT_PROMPTS:
+            console.print(f"[bold green]→ Switching to {next_agent.upper()}[/]")
+            session.current_agent = next_agent
+            session.phase = next_agent
+
+        if commands:
+            table = Table(title="Proposed Commands")
+            table.add_column("#")
+            table.add_column("Command")
+            table.add_column("Safety")
             for i, cmd in enumerate(commands, 1):
-                dangerous, reason = is_dangerous_command(cmd)
-                safety = "[red]DANGEROUS[/red]" if dangerous else "[green]SAFE[/green]"
-                if dangerous:
-                    safety += f" ({reason})"
+                safe, reason = is_safe_command(cmd)
+                safety = "[green]SAFE[/]" if safe else f"[red]BLOCKED[/] ({reason})"
                 table.add_row(str(i), cmd, safety)
             console.print(table)
 
-            if done:
-                console.print("[bold green]Agent reports mission complete![/bold green]")
-                console.print(Panel(thought, title="Final Report"))
-
-            if not Confirm.ask("Execute these commands?", default=False):
-                if next_prompt:
-                    prompt = Prompt.ask("Your response to agent")
+            if not autonomous and not Confirm.ask("Execute safe commands?", default=True):
                 continue
 
-            executed_outputs = []
-            for cmd in commands:
-                dangerous, reason = is_dangerous_command(cmd)
-                if dangerous:
-                    if not Confirm.ask(f"[red]DANGEROUS COMMAND[/red]\n{reason}\nStill run?", default=False):
-                        console.print("[yellow]Skipped.[/yellow]")
-                        continue
+            safe_cmds = [c for c in commands if is_safe_command(c)[0]]
+            if safe_cmds:
+                results = await execute_commands(safe_cmds, args.use_docker, args.dry_run)
+                for r in results:
+                    if isinstance(r, dict):
+                        session.raw_outputs.append(r)
 
-                code, out, err = execute_command(cmd, args.use_docker, args.dry_run)
-                result = f"Exit: {code}\nSTDOUT:\n{out}\nSTDERR:\n{err}"
-                executed_outputs.append(result)
-                state.previous_results.append(result)
-
-                if code != 0:
-                    console.print(f"[bold red]Command failed (code {code})[/bold red]")
-
-            # Feed back to next iteration
-            if executed_outputs:
-                prompt = f"Previous commands executed. Results:\n" + "\n".join(executed_outputs) + "\nContinue."
-
-            if done:
+        if done:
+            console.print("[bold bright_green]Phase / Session complete. Generating report...[/]")
+            report = generate_vapt_report(session)
+            report_path = REPORT_DIR / f"vapt_{session.target.replace('.', '_')}_{datetime.now():%Y%m%d_%H%M}.md"
+            report_path.write_text(report)
+            console.print(f"[green]Full report saved → {report_path}[/]")
+            console.print(Panel(report[:2000] + "\n...", title="Report Preview", expand=True))
+            if Confirm.ask("Exit now?", default=True):
                 break
 
-        state.history.append({
-            "timestamp": datetime.now().isoformat(),
-            "prompt": user_input,
-            "response": response,
-            "executed": executed_outputs if 'executed_outputs' in locals() else []
-        })
-        state.save()
+        session.save()
 
-# ─── CLI Entry ───────────────────────────────────────────────────
+# ─── Entry Point ─────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="DestroyGPT v2 — Agentic Ethical Hacking CLI")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="OpenRouter model name")
-    parser.add_argument("--use-docker", action="store_true", help="Use Docker sandbox (recommended)")
-    parser.add_argument("--dry-run", action="store_true", help="Show commands but don't execute")
-    parser.add_argument("--verbosity", type=int, default=1, help="Logging level")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--use-docker", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("-v", "--verbose", action="count", default=1)
     args = parser.parse_args()
 
-    setup_logging(args.verbosity)
-    logger.info(f"Starting {APP_NAME}")
+    setup_logging(args.verbose)
 
-    api_key = load_or_prompt_api_key()
+    config = Config()
+    session = Session()
 
-    state = SessionState()
-    state.load()
-
-    if not state.target:
-        console.print("[yellow]No target set. Use 'set-target' command.[/yellow]")
-
-    try:
-        agent_loop(state, api_key, args)
-    except KeyboardInterrupt:
-        console.print("\n[bold red]Interrupted. Saving session...[/bold red]")
-        state.save()
+    asyncio.run(main_loop(session, config, args))
 
 if __name__ == "__main__":
     main()

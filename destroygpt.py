@@ -1125,7 +1125,7 @@ async def main_loop(session: Session, config: Config, args) -> None:
             }
             
             for key, val in templates.items():
-                console.print(f"  [{cyan}{key}[/cyan}] {val['name']:<25} ({val['example']})")
+                console.print(f"  [cyan]{key}[/cyan] {val['name']:<25} ({val['example']})")
             
             choice = Prompt.ask("\n[bold]Select option[/]", choices=["1", "2", "3", "4", "5"], default="1")
             

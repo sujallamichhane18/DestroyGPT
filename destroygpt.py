@@ -106,6 +106,37 @@ SAFE_COMMANDS = {
     "find", "locate", "which", "whereis", "file", "strings", "hexdump"
 }
 
+# Tool to package mapping for auto-install
+TOOL_PACKAGE_MAP = {
+    "nslookup": "dnsutils",
+    "dig": "dnsutils",
+    "host": "dnsutils",
+    "whois": "whois",
+    "dnsrecon": "dnsrecon",
+    "fierce": "fierce",
+    "dnsenum": "dnsenum",
+    "curl": "curl",
+    "wget": "wget",
+    "whatweb": "whatweb",
+    "wafw00f": "wafw00f",
+    "nikto": "nikto",
+    "testssl.sh": "testssl-sh",
+    "nmap": "nmap",
+    "masscan": "masscan",
+    "naabu": "naabu",
+    "gobuster": "gobuster",
+    "ffuf": "ffuf",
+    "dirsearch": "dirsearch",
+    "feroxbuster": "feroxbuster",
+    "nuclei": "nuclei",
+    "sqlmap": "sqlmap",
+    "tcpdump": "tcpdump",
+    "tshark": "tshark",
+    "jq": "jq",
+    "wfuzz": "wfuzz",
+    "dirb": "dirb",
+}
+
 DANGER_PATTERNS = [
     r"(?i)rm\s+-rf\s+[/~.]",
     r"(?i)dd\s+if=/dev/zero|of=/dev/sd[a-z]",

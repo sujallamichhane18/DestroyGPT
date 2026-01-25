@@ -52,7 +52,7 @@ LOG_FILE = HOME / ".destroygpt.log"
 SESSION_STATE_FILE = HOME / ".destroygpt_session.json"
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "anthropic/claude-3.5-sonnet"  # or "openai/gpt-4o" or "deepseek/deepseek-r1:free"
+DEFAULT_MODEL = "openai/gpt-oss-20b"  # or "openai/gpt-4o" or "deepseek/deepseek-r1:free" anthropic/claude-3.5-sonnet
 
 STREAM_TIMEOUT = 180
 COMMAND_TIMEOUT_SEC = 300

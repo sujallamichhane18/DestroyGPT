@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 DestroyGPT v5.0 - Minimal & Functional Shell-based Hacking Assistant
-Inspired by ShellGPT - Simple, Fast, Effective
+ Simple, Fast, Effective , Free
 """
 
 import argparse
@@ -200,28 +200,27 @@ def main():
     history = load_history()
     
     # Welcome message with custom banner
-    banner = r"""
- mmmmm        mmmm   mmmmmm    mmmmmmmm 
- ##"""##    ##""""#  ##""""#m  """##""" 
- ##    ##  ##        ##    ##     ##    
- ##    ##  ##  mmmm  ######"      ##    
- ##    ##  ##  ""##  ##           ##    
- ##mmm##    ##mmm##  ##           ##    
- """""        """"   ""           ""    
-                                        
- mmmmm        mmmm   mmmmmm    mmmmmmmm 
- ##"""##    ##""""#  ##""""#m  """##""" 
- ##    ##  ##        ##    ##     ##    
- ##    ##  ##  mmmm  ######"      ##    
- ##    ##  ##  ""##  ##           ##    
- ##mmm##    ##mmm##  ##           ##    
- """""        """"   ""           ""    
-
-    [bold cyan]AI-Powered Ethical Hacking Assistant[/]
-    [bold yellow]v5.0 Minimal Edition[/]
-    
-    [bold green]Made by: Sujal Lamichhane[/]
-    [cyan]GitHub: sujallamichhane18/DestroyGPT[/]
+    banner = """
+    ╔════════════════════════════════════════════════════════════════╗
+    ║                                                                ║
+    ║                                                            
+                mmmmm        mmmm   mmmmmm    mmmmmmmm 
+                 ##"""##    ##""""#  ##""""#m  """##""" 
+                 ##    ##  ##        ##    ##     ##    
+                 ##    ##  ##  mmmm  ######"      ##    
+                 ##    ##  ##  ""##  ##          ##    
+                 ##mmm##    ##mmm##  ##           ##    
+                   """""      """"   ""           ""                               
+    ║
+    ║
+    ║                                                                ║
+    ║              AI-Powered Ethical Hacking Tool                   ║
+    ║                 v5.0 Minimal & Powerful                        ║
+    ║                                                                ║
+    ║              Author: Sujal Lamichhane                          ║
+    ║          GitHub: sujallamichhane18/DestroyGPT                  ║
+    ║                                                                ║
+    ╚════════════════════════════════════════════════════════════════╝
     """
     console.print(banner)
     console.print("[red bold]⚠️  ETHICAL HACKING WARNING ⚠️[/]\n")

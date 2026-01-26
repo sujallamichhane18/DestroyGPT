@@ -31,7 +31,7 @@ HISTORY_FILE = HOME / ".destroygpt_history.json"
 LOG_FILE = HOME / ".destroygpt.log"
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "openai/gpt-oss-120b:free"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 # Timeout settings
 STREAM_TIMEOUT = 60

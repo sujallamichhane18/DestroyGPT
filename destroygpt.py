@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
-"""
-DestroyGPT v8.0 - Clean, Fast, Intelligent
-No fluff. Just results.
-"""
+"""DestroyGPT v8.0 - Clean, Fast, Works"""
 
-import argparse
-import json
 import os
 import sys
 import getpass
 import subprocess
 import requests
+import json
 from pathlib import Path
-from datetime import datetime
 
 HOME = Path.home()
 API_KEY_FILE = HOME / ".destroygpt_api_key"
@@ -28,18 +23,17 @@ MODELS = {
     "5": "google/gemma-3-27b-it",
 }
 
-# ─── CONVERSATION STATE ──────────────────────────────────────────
-
-class State:
-    def __init__(self):
+class AI:
+    def __init__(self, api_key, model):
+        self.api_key = api_key
+        self.model = model
         self.history = []
-        self.context = {}
         self.load_history()
     
     def load_history(self):
         if HISTORY_FILE.exists():
             try:
-                self.history = json.loads(HISTORY_FILE.read_text())[-10:]
+                self.history = json.loads(HISTORY_FILE.read_text())[-5:]
             except:
                 self.history = []
     
@@ -47,133 +41,108 @@ class State:
         with open(HISTORY_FILE, 'w') as f:
             json.dump(self.history, f)
     
-    def add(self, role: str, msg: str):
-        self.history.append({"role": role, "content": msg})
-        self.save_history()
-    
-    def get_context(self) -> list:
-        """Return last 5 messages for context"""
-        return self.history[-5:] if self.history else []
-
-# ─── API ────────────────────────────────────────────────────────
-
-def call_ai(api_key: str, prompt: str, model: str, state: State) -> str:
-    """Call AI with actual context"""
-    
-    # Smart system prompt based on question
-    if any(x in prompt.lower() for x in ["scan", "nmap", "port", "dns", "network"]):
-        system = """You are a hacking expert. Answer questions about penetration testing.
-
-CRITICAL RULES:
-1. NEVER use placeholders like <IP>, <target>, <domain>
-2. Use REAL example values (192.168.1.0/24, example.com)
-3. Be CONCISE - one line command, one line explanation
-4. NO unnecessary details
-5. NO markdown formatting
-6. If command is dangerous, warn first"""
-    else:
-        system = """You are a helpful AI. Answer concisely and directly.
-Use real examples, not placeholders.
-Keep responses short."""
-    
-    messages = [{"role": "system", "content": system}]
-    
-    # Add context
-    for msg in state.get_context():
-        messages.append(msg)
-    
-    messages.append({"role": "user", "content": prompt})
-    
-    try:
-        r = requests.post(
-            API_URL,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": model, "messages": messages, "temperature": 0.7, "max_tokens": 1000},
-            timeout=60
-        )
+    def ask(self, prompt):
+        """Call AI and get response"""
+        system = "You are a security expert. Answer questions about hacking, networking, and penetration testing. Keep answers concise. Never use placeholders like <IP> or <domain> - use real examples like 192.168.1.1 or example.com"
         
-        if r.status_code == 200:
-            content = r.json()["choices"][0]["message"]["content"].strip()
-            return content
-        else:
-            return f"API Error {r.status_code}"
-    except Exception as e:
-        return f"Error: {str(e)[:50]}"
+        messages = [{"role": "system", "content": system}]
+        messages.extend(self.history[-3:])
+        messages.append({"role": "user", "content": prompt})
+        
+        try:
+            r = requests.post(
+                API_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 800
+                },
+                timeout=60
+            )
+            
+            if r.status_code == 200:
+                response = r.json()["choices"][0]["message"]["content"].strip()
+                self.history.append({"role": "user", "content": prompt})
+                self.history.append({"role": "assistant", "content": response})
+                self.save_history()
+                return response
+            else:
+                return f"API Error {r.status_code}"
+        except Exception as e:
+            return f"Error: {str(e)}"
 
-# ─── COMMAND EXECUTION ──────────────────────────────────────────
+def extract_command(response):
+    """Extract executable command from response"""
+    for line in response.split('\n'):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        
+        # Remove markdown
+        line = line.replace('```bash', '').replace('```sh', '').replace('```', '').strip()
+        
+        # Check if looks like command
+        if any(cmd in line for cmd in ['ping', 'nmap', 'dig', 'curl', 'ssh', 'nc', 'telnet', 'traceroute', 'whois']):
+            # Skip if has placeholders
+            if '<' not in line and '>' not in line:
+                return line
+    
+    return None
 
-def run_cmd(cmd: str) -> str:
-    """Execute command, return output"""
+def run_command(cmd):
+    """Execute command safely"""
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
-        output = result.stdout.strip() or result.stderr.strip()
-        if not output:
-            return "[Command executed successfully - no output]"
-        return output
+        output = result.stdout.strip() if result.stdout else result.stderr.strip()
+        return output if output else "Command executed"
     except subprocess.TimeoutExpired:
         return "[Command timeout - taking too long]"
     except Exception as e:
-        return f"[Error: {str(e)[:50]}]"
+        return f"[Error: {str(e)}]"
 
-# ─── MAIN ────────────────────────────────────────────────────────
+def get_api_key():
+    """Get or create API key"""
+    if os.getenv("OPENROUTER_API_KEY"):
+        return os.getenv("OPENROUTER_API_KEY").strip()
+    
+    if API_KEY_FILE.exists():
+        return API_KEY_FILE.read_text().strip()
+    
+    print("Enter OpenRouter API key:")
+    key = getpass.getpass().strip()
+    if key:
+        API_KEY_FILE.write_text(key)
+        API_KEY_FILE.chmod(0o600)
+    return key
 
 def main():
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("-h", "--help", action="store_true")
-    parser.add_argument("-k", "--key", action="store_true")
-    args = parser.parse_args()
+    """Main interactive loop"""
     
-    if args.help:
-        print("""
-DestroyGPT v8.0 - No Fluff. Just Results.
-
-Commands:
-  help, -h        This help
-  key, -k         Update API key
-  exit, quit      Exit
-  history         Show past 5 messages
-  
-Just ask anything:
-  scan my network
-  what is nmap
-  check if port 80 is open
-  find subdomains of example.com
-
-Smart features:
-✓ Remembers conversation
-✓ Real examples (not placeholders)
-✓ Fast & concise
-✓ No unnecessary text
-        """)
-        return
-    
-    # API Key
-    if args.key:
-        print("🔑 Enter API key (hidden):")
-        key = getpass.getpass().strip()
-        if key:
-            Path(API_KEY_FILE).write_text(key)
-            Path(API_KEY_FILE).chmod(0o600)
-            print("✓ Saved")
-        return
-    
-    key = os.getenv("OPENROUTER_API_KEY") or (API_KEY_FILE.read_text().strip() if API_KEY_FILE.exists() else "")
-    if not key:
-        print("No API key. Run: python3 destroygpt.py -k")
+    # Get API key
+    api_key = get_api_key()
+    if not api_key:
+        print("No API key found")
         sys.exit(1)
     
-    # Model selection
+    # Select model
     print("\n🤖 DestroyGPT v8.0\n")
     print("Models:")
     for k, v in MODELS.items():
         print(f"  [{k}] {v}")
     
-    choice = input("\nSelect [1-5] (default 1): ").strip()
+    choice = input("\nSelect [1-5] (default 1): ").strip() or "1"
     model = MODELS.get(choice, MODELS["1"])
-    print(f"✓ Using: {model}\n")
-    print("Type 'help' for commands, 'exit' to quit\n")
+    print(f"Using: {model}\n")
     
-    state = State()
+    # Initialize AI
+    ai = AI(api_key, model)
+    
+    print("Commands: help, exit, history\n")
     
     # Main loop
     while True:
@@ -183,103 +152,47 @@ Smart features:
             if not user_input:
                 continue
             
-            if user_input.lower() in ("exit", "quit"):
+            if user_input.lower() == "exit":
                 print("Goodbye!")
                 break
             
             if user_input.lower() == "help":
-                print("""
-Commands:
-  history         Show conversation
-  key             Update API key
-  exit            Exit
-                """)
+                print("Just type your question or command idea")
+                print("Examples: scan my network, check if port 80 is open, ping google.com")
+                print()
                 continue
             
             if user_input.lower() == "history":
-                for msg in state.get_context():
+                for msg in ai.history[-6:]:
                     role = "You" if msg["role"] == "user" else "AI"
-                    content = msg["content"][:60]
-                    print(f"{role}: {content}...")
+                    text = msg["content"][:70]
+                    print(f"{role}: {text}...")
                 print()
                 continue
             
             # Get AI response
             print()
-            response = call_ai(key, user_input, model, state)
+            response = ai.ask(user_input)
             
-            # Check for command
-            has_cmd = False
-            cmd_to_run = None
+            # Extract and show command
+            cmd = extract_command(response)
+            if cmd:
+                print(f"💻 {cmd}")
             
-            if response and not response.startswith("Error") and not response.startswith("API"):
-                lines = response.split('\n')
-                
-                for line in lines:
-                    # Skip markdown code block markers
-                    if line.strip().startswith("```"):
-                        continue
-                    
-                    # Clean the line
-                    line = line.strip()
-                    
-                    # Look for executable lines
-                    if line and not line.startswith('#') and not line.startswith('
-            
-            # Save to history
-            state.add("user", user_input)
-            state.add("assistant", response)
-        
-        except KeyboardInterrupt:
-            print("\n\nGoodbye!")
-            break
-        except Exception as e:
-            print(f"Error: {e}\n")
-
-if __name__ == "__main__":
-    main()
-):
-                        # Check if it looks like a command
-                        if any(x in line for x in ['ping', 'nmap', 'dig', 'curl', 'ssh', 'bash', 'python', '&&', '|']):
-                            # Clean markdown
-                            cmd = line.replace('```bash', '').replace('```sh', '').replace('```', '').strip()
-                            
-                            # Skip if has placeholders
-                            if '<' in cmd or '>' in cmd:
-                                print(f"⚠️  Needs parameters: {cmd}\n")
-                                break
-                            
-                            # Skip if still has markdown
-                            if '```' in cmd:
-                                continue
-                            
-                            print(f"💻 {cmd}")
-                            cmd_to_run = cmd
-                            has_cmd = True
-                            break
-            
-            # Print full response (without markdown)
-            clean_response = response.replace('```bash', '').replace('```sh', '').replace('```', '')
-            print(clean_response)
+            # Show response
+            print(response)
             print()
             
-            # Execute if found command
-            if has_cmd and cmd_to_run:
-                try:
-                    if input("Run? [y/N]: ").strip().lower() == 'y':
-                        print()
-                        output = run_cmd(cmd_to_run)
-                        print(output)
-                        print()
-                except KeyboardInterrupt:
-                    print("\n")
-            
-            # Save to history
-            state.add("user", user_input)
-            state.add("assistant", response)
+            # Execute if command found
+            if cmd:
+                if input("Run? [y/N]: ").strip().lower() == "y":
+                    print()
+                    output = run_command(cmd)
+                    print(output)
+                    print()
         
         except KeyboardInterrupt:
-            print("\n\nGoodbye!")
+            print("\nGoodbye!")
             break
         except Exception as e:
             print(f"Error: {e}\n")

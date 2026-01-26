@@ -66,12 +66,48 @@ def get_api_key() -> str:
 def call_llm_stream(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> bool:
     """Call OpenRouter API and stream response"""
     
+    # Detect if user is asking for hacking/security commands
+    hacking_keywords = ["scan", "port", "nmap", "exploit", "vulnerability", "hack", "security", 
+                        "pentest", "osint", "dns", "ssl", "injection", "enum", "brute", "crack",
+                        "payload", "shell", "backdoor", "malware", "network", "firewall", "ips",
+                        "certificate", "subdomain", "directory", "http", "headers", "ip", "server"]
+    
+    is_hacking_question = any(keyword in prompt.lower() for keyword in hacking_keywords)
+    
+    if is_hacking_question:
+        system_prompt = """You are DestroyGPT, an advanced ethical hacking assistant. When users ask about security testing, provide practical Linux commands and detailed explanations.
+
+For hacking/security questions, ALWAYS respond in this format:
+COMMAND: <the actual command>
+EXPLANATION: <what it does and how it helps>
+TIPS: <advanced variations or related commands>
+
+Examples:
+User: scan my website
+COMMAND: nmap -sV -p- example.com && curl -I https://example.com
+EXPLANATION: nmap scans all ports and identifies services. curl gets HTTP headers which may reveal server info or misconfigurations.
+TIPS: Add -sC for default scripts, -O for OS detection. Use -A for aggressive scan. Combine with whatweb for tech fingerprinting.
+
+User: check ssl
+COMMAND: openssl s_client -connect example.com:443 -showcerts
+EXPLANATION: Shows SSL certificate details, chain, and cipher strength. Helps identify weak certs or misconfiguration.
+TIPS: Use -dates to check expiration, add | grep -i "subject" for quick info.
+
+User: enumerate dns
+COMMAND: dig example.com ANY && nslookup -type=MX example.com && dnsrecon -d example.com -t std
+EXPLANATION: Gets all DNS records, identifies mail servers, finds subdomains. Critical for reconnaissance.
+TIPS: Use fierce for subdomain brute forcing, amass for comprehensive enumeration.
+
+Always provide commands that are practical and educational."""
+    else:
+        system_prompt = """You are DestroyGPT, a helpful AI assistant created by Sujal Lamichhane. You help with coding, hacking, security, and general knowledge. Be concise and practical."""
+    
     payload = {
         "model": model,
         "messages": [
             {
                 "role": "system",
-                "content": "You are DestroyGPT, a helpful AI assistant created by Sujal Lamichhane. You help with coding, hacking, security, and general knowledge. Be concise and practical."
+                "content": system_prompt
             },
             {
                 "role": "user",
@@ -93,11 +129,10 @@ def call_llm_stream(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> bo
             if r.status_code != 200:
                 console.print(f"[red]✗ API Error {r.status_code}[/]")
                 if r.status_code == 404:
-                    console.print("[yellow]⚠️  Model not found. Using fallback model...[/]")
+                    console.print("[yellow]⚠️  Model not found. Retrying with fallback...[/]")
                     return call_llm_stream(api_key, prompt, "openai/gpt-4o-mini")
                 elif r.status_code == 401:
-                    console.print("[red]❌ Invalid API key. Please check your API key.[/]")
-                    console.print(f"[yellow]Stored at: {API_KEY_FILE}[/]")
+                    console.print("[red]❌ Invalid API key.[/]")
                 return False
             
             response_text = []

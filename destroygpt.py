@@ -15,6 +15,7 @@ from typing import Optional
 
 import subprocess
 import shlex
+import requests
 
 # ─── CONFIG ──────────────────────────────────────────────────────
 

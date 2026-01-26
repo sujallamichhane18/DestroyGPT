@@ -22,20 +22,31 @@ HOME = Path.home()
 API_KEY_FILE = HOME / ".destroygpt_api_key"
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "openai/gpt-4o-mini"
+
+# Available free models
+MODELS = {
+    "1": {"name": "openai/gpt-oss-120b", "label": "GPT-OSS 120B (Fast & Powerful)"},
+    "2": {"name": "arcee-ai/trinity-mini", "label": "Trinity Mini (Lightweight)"},
+    "3": {"name": "nvidia/nemotron-nano-12b-v2-vl", "label": "Nemotron Nano (Efficient)"},
+    "4": {"name": "moonshotai/kimi-k2", "label": "Kimi K2 (Advanced)"},
+    "5": {"name": "google/gemma-3-27b-it", "label": "Gemma 3 27B (Powerful)"},
+}
+
+DEFAULT_MODEL = MODELS["1"]["name"]
 API_TIMEOUT = 120
 
 # ─── API KEY MANAGEMENT ──────────────────────────────────────────
 
-def get_api_key() -> str:
+def get_api_key(force_new: bool = False) -> str:
     """Get API key from file or environment"""
-    if os.getenv("OPENROUTER_API_KEY"):
-        return os.getenv("OPENROUTER_API_KEY").strip()
-    
-    if API_KEY_FILE.exists():
-        key = API_KEY_FILE.read_text().strip()
-        if key:
-            return key
+    if not force_new:
+        if os.getenv("OPENROUTER_API_KEY"):
+            return os.getenv("OPENROUTER_API_KEY").strip()
+        
+        if API_KEY_FILE.exists():
+            key = API_KEY_FILE.read_text().strip()
+            if key:
+                return key
     
     print("🔑 Enter OpenRouter API key (hidden):")
     key = getpass.getpass().strip()
@@ -44,6 +55,61 @@ def get_api_key() -> str:
         API_KEY_FILE.chmod(0o600)
         print(f"✓ API key saved to {API_KEY_FILE}")
     return key
+
+def select_model() -> str:
+    """Let user select a model"""
+    print("\n📊 Available Free Models:\n")
+    for key, model in MODELS.items():
+        print(f"  [{key}] {model['label']}")
+        print(f"      Model: {model['name']}\n")
+    
+    choice = input("Select model [1-5] (default 1): ").strip()
+    selected = MODELS.get(choice, MODELS["1"])
+    print(f"✓ Using: {selected['label']}\n")
+    return selected["name"]
+
+def test_api(api_key: str, model: str) -> bool:
+    """Test if API key works with selected model"""
+    print(f"🔍 Testing API with {model}...")
+    
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "test"}],
+        "temperature": 0.5,
+        "max_tokens": 10,
+        "stream": False
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            print("✓ API key is valid!\n")
+            return True
+        elif response.status_code == 401:
+            print("✗ Invalid API key")
+            return False
+        elif response.status_code == 429:
+            print("✗ API rate limit exceeded")
+            return False
+        elif response.status_code == 503:
+            print(f"✗ Model {model} is unavailable or quota exceeded")
+            return False
+        else:
+            print(f"✗ Error {response.status_code}: {response.text[:100]}")
+            return False
+    
+    except requests.Timeout:
+        print("✗ API request timed out")
+        return False
+    except Exception as e:
+        print(f"✗ Connection error: {str(e)[:100]}")
+        return False
 
 # ─── COMMAND EXECUTION ──────────────────────────────────────────
 
@@ -167,27 +233,37 @@ Keep responses short and to the point."""
     try:
         response = requests.post(API_URL, headers=headers, json=payload, timeout=API_TIMEOUT)
         
-        if response.status_code != 200:
-            print(f"✗ API Error {response.status_code}")
-            if response.status_code == 401:
-                print("  Invalid API key. Please check your ~/.destroygpt_api_key")
+        if response.status_code == 200:
+            data = response.json()
+            if "choices" in data and len(data["choices"]) > 0:
+                content = data["choices"][0].get("message", {}).get("content", "")
+                return content.strip()
             return None
         
-        data = response.json()
-        if "choices" in data and len(data["choices"]) > 0:
-            content = data["choices"][0].get("message", {}).get("content", "")
-            return content.strip()
+        elif response.status_code == 401:
+            print("\n✗ Invalid API key")
+            return None
         
-        return None
+        elif response.status_code == 429:
+            print("\n✗ API rate limit exceeded - quota used")
+            return None
+        
+        elif response.status_code == 503:
+            print("\n✗ Model unavailable or quota exceeded")
+            return None
+        
+        else:
+            print(f"\n✗ API Error {response.status_code}")
+            return None
     
     except requests.Timeout:
-        print("✗ Request timed out")
+        print("\n✗ Request timed out")
         return None
     except requests.exceptions.ConnectionError:
-        print("✗ Connection error - check your internet")
+        print("\n✗ Connection error")
         return None
     except Exception as e:
-        print(f"✗ Error: {str(e)[:100]}")
+        print(f"\n✗ Error: {str(e)[:100]}")
         return None
 
 # ─── MAIN ────────────────────────────────────────────────────────

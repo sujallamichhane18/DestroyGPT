@@ -144,6 +144,16 @@ def extract_and_execute_command(response: str, api_key: str, model: str) -> str:
             tips = line.replace("TIPS:", "").strip()
     
     if command:
+        # Clean up the command - remove placeholders
+        if "<" in command or ">" in command:
+            print(f"\n⚠️  Command has placeholders that need to be filled:")
+            print(f"  {command}\n")
+            print("Please provide the missing information or modify the command:\n")
+            command = input("$ ").strip()
+            if not command:
+                print()
+                return response
+        
         print(f"\n📋 Suggested Command:\n  {command}\n")
         
         if explanation:
@@ -189,24 +199,30 @@ You help with penetration testing, security research, and reconnaissance.
 
 IMPORTANT: For security/hacking questions, respond in this format:
 
-COMMAND: <the exact command to run>
+COMMAND: <the exact command to run - NO PLACEHOLDERS>
 EXPLANATION: <what it does>
 TIPS: <variations and advanced usage>
 
-Be direct and provide working commands. No markdown, no code blocks.
+Be direct and provide COMPLETE, READY-TO-RUN commands. No markdown, no code blocks.
+NEVER use placeholders like <target>, <ip>, <domain>, etc. Use example values instead.
 
 Examples:
-User: scan my website example.com
-COMMAND: nmap -sV -p- example.com && curl -I https://example.com
-EXPLANATION: nmap scans all ports and identifies services. curl gets HTTP headers revealing server info.
-TIPS: Add -A for aggressive scan, -O for OS detection, combine with whatweb for technology fingerprinting.
+User: scan my network
+COMMAND: nmap -sn 192.168.1.0/24
+EXPLANATION: Performs a ping sweep of the 192.168.1.0/24 subnet to find live hosts.
+TIPS: Add -sV for service detection, use -O for OS detection. For faster scans use -T4.
+
+User: scan using arp
+COMMAND: sudo arp-scan -l
+EXPLANATION: Sends ARP probes on the local network segment to list all devices and their MAC addresses.
+TIPS: Add --interface=eth0 to specify a network interface, use -r 3 to send 3 requests per address.
 
 User: find subdomains
-COMMAND: dnsrecon -d example.com -t std && dig example.com ANY
-EXPLANATION: dnsrecon enumerates DNS records to find subdomains. dig shows all DNS records.
-TIPS: Use fierce for brute forcing, amass for comprehensive enumeration.
+COMMAND: dig example.com ANY
+EXPLANATION: Queries all DNS records for example.com to find subdomains and mail servers.
+TIPS: Use dnsrecon -d example.com -t std for more comprehensive enumeration.
 
-Always provide practical, working commands."""
+CRITICAL: Always provide complete, executable commands with example values. Never use angle brackets or placeholders."""
     else:
         system_prompt = """You are DestroyGPT, a helpful AI assistant created by Sujal Lamichhane. 
 Be concise, direct, and practical in your responses.

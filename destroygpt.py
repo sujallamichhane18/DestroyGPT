@@ -210,33 +210,69 @@ Commands:
             
             # Check for command
             has_cmd = False
+            cmd_to_run = None
+            
             if response and not response.startswith("Error") and not response.startswith("API"):
-                # Try to extract command from response
                 lines = response.split('\n')
                 
                 for line in lines:
+                    # Skip markdown code block markers
+                    if line.strip().startswith("```"):
+                        continue
+                    
+                    # Clean the line
+                    line = line.strip()
+                    
                     # Look for executable lines
-                    if line.strip() and not line.startswith('#') and any(x in line for x in ['nmap', 'dig', 'curl', 'ssh', 'bash', '&&', '|', '$']):
-                        # Clean line
-                        cmd = line.strip()
-                        if '<' in cmd:
-                            print(f"Command needs parameters: {cmd}\n")
-                            break
-                        
-                        print(f"💻 {cmd}")
-                        has_cmd = True
-                        break
+                    if line and not line.startswith('#') and not line.startswith('
             
-            # Print response
-            print(response)
+            # Save to history
+            state.add("user", user_input)
+            state.add("assistant", response)
+        
+        except KeyboardInterrupt:
+            print("\n\nGoodbye!")
+            break
+        except Exception as e:
+            print(f"Error: {e}\n")
+
+if __name__ == "__main__":
+    main()
+):
+                        # Check if it looks like a command
+                        if any(x in line for x in ['ping', 'nmap', 'dig', 'curl', 'ssh', 'bash', 'python', '&&', '|']):
+                            # Clean markdown
+                            cmd = line.replace('```bash', '').replace('```sh', '').replace('```', '').strip()
+                            
+                            # Skip if has placeholders
+                            if '<' in cmd or '>' in cmd:
+                                print(f"⚠️  Needs parameters: {cmd}\n")
+                                break
+                            
+                            # Skip if still has markdown
+                            if '```' in cmd:
+                                continue
+                            
+                            print(f"💻 {cmd}")
+                            cmd_to_run = cmd
+                            has_cmd = True
+                            break
+            
+            # Print full response (without markdown)
+            clean_response = response.replace('```bash', '').replace('```sh', '').replace('```', '')
+            print(clean_response)
             print()
             
             # Execute if found command
-            if has_cmd and input("Run? [y/N]: ").strip().lower() == 'y':
-                print()
-                output = run_cmd(cmd)
-                print(output)
-                print()
+            if has_cmd and cmd_to_run:
+                try:
+                    if input("Run? [y/N]: ").strip().lower() == 'y':
+                        print()
+                        output = run_cmd(cmd_to_run)
+                        print(output)
+                        print()
+                except KeyboardInterrupt:
+                    print("\n")
             
             # Save to history
             state.add("user", user_input)

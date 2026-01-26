@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DestroyGPT v5.0
+DestroyGPT v5.0 - ShellGPT-inspired Minimal AI Assistant
 Usage: python3 dgpt.py [QUERY]
 Simple, Fast, Powerful - Just like ShellGPT but for hacking
 """

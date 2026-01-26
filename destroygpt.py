@@ -1,46 +1,28 @@
 #!/usr/bin/env python3
 """
-DestroyGPT v5.0 - Universal AI Assistant
-Works like ChatGPT but for hacking, coding, and everything else
-
-Installation:
-    1. Save this file as 'dgpt' (without .py)
-    2. Make it executable: chmod +x dgpt
-    3. Move to /usr/local/bin: sudo mv dgpt /usr/local/bin/
-    4. Now use: dgpt "your question"
+DestroyGPT v5.0 - ShellGPT-inspired Minimal AI Assistant
+Usage: python3 dgpt.py [QUERY]
+Simple, Fast, Powerful - Just like ShellGPT but for hacking
 """
 
 import argparse
 import json
-import logging
 import os
-import getpass
 import sys
-from datetime import datetime
+import getpass
 from pathlib import Path
 from typing import Optional
 
 import requests
-from rich.console import Console
-from rich.markdown import Markdown
 
 # ─── CONFIG ──────────────────────────────────────────────────────
 
 HOME = Path.home()
 API_KEY_FILE = HOME / ".destroygpt_api_key"
-HISTORY_FILE = HOME / ".destroygpt_history.json"
-LOG_FILE = HOME / ".destroygpt.log"
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "openai/gpt-4o-mini"
-
-STREAM_TIMEOUT = 60
 API_TIMEOUT = 120
-
-# ─── SETUP ───────────────────────────────────────────────────────
-
-console = Console()
-logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format='%(asctime)s - %(message)s')
 
 # ─── API KEY MANAGEMENT ──────────────────────────────────────────
 
@@ -54,69 +36,55 @@ def get_api_key() -> str:
         if key:
             return key
     
-    console.print("[yellow]🔑 Enter OpenRouter API key (hidden):[/]")
+    print("🔑 Enter OpenRouter API key (hidden):")
     key = getpass.getpass().strip()
     if key:
         API_KEY_FILE.write_text(key)
         API_KEY_FILE.chmod(0o600)
+        print(f"✓ API key saved to {API_KEY_FILE}")
     return key
 
 # ─── LLM CALL ────────────────────────────────────────────────────
 
-def call_llm_stream(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> bool:
-    """Call OpenRouter API and stream response"""
+def call_llm(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> Optional[str]:
+    """Call OpenRouter API and return response"""
     
     # Detect if user is asking for hacking/security commands
     hacking_keywords = ["scan", "port", "nmap", "exploit", "vulnerability", "hack", "security", 
                         "pentest", "osint", "dns", "ssl", "injection", "enum", "brute", "crack",
-                        "payload", "shell", "backdoor", "malware", "network", "firewall", "ips",
-                        "certificate", "subdomain", "directory", "http", "headers", "ip", "server"]
+                        "payload", "shell", "backdoor", "malware", "network", "firewall",
+                        "certificate", "subdomain", "directory", "http", "headers", "ip", "server",
+                        "website", "web", "site", "domain", "target", "check", "test", "find",
+                        "enumerate", "discover", "recon", "fingerprint", "identify", "detect", "query"]
     
     is_hacking_question = any(keyword in prompt.lower() for keyword in hacking_keywords)
     
     if is_hacking_question:
-        system_prompt = """You are DestroyGPT, an advanced ethical hacking assistant. When users ask about security testing, provide practical Linux commands and detailed explanations.
+        system_prompt = """You are DestroyGPT, an advanced ethical hacking assistant created by Sujal Lamichhane.
+You help with penetration testing, security research, and reconnaissance.
 
-For hacking/security questions, ALWAYS respond in this format:
-COMMAND: <the actual command>
-EXPLANATION: <what it does and how it helps>
-TIPS: <advanced variations or related commands>
+IMPORTANT: For security/hacking questions, ALWAYS respond with practical commands.
 
-Examples:
-User: scan my website
-COMMAND: nmap -sV -p- example.com && curl -I https://example.com
-EXPLANATION: nmap scans all ports and identifies services. curl gets HTTP headers which may reveal server info or misconfigurations.
-TIPS: Add -sC for default scripts, -O for OS detection. Use -A for aggressive scan. Combine with whatweb for tech fingerprinting.
+Format your response clearly with:
+- The command to execute
+- What it does
+- How to use it
+- Related commands
 
-User: check ssl
-COMMAND: openssl s_client -connect example.com:443 -showcerts
-EXPLANATION: Shows SSL certificate details, chain, and cipher strength. Helps identify weak certs or misconfiguration.
-TIPS: Use -dates to check expiration, add | grep -i "subject" for quick info.
-
-User: enumerate dns
-COMMAND: dig example.com ANY && nslookup -type=MX example.com && dnsrecon -d example.com -t std
-EXPLANATION: Gets all DNS records, identifies mail servers, finds subdomains. Critical for reconnaissance.
-TIPS: Use fierce for subdomain brute forcing, amass for comprehensive enumeration.
-
-Always provide commands that are practical and educational."""
+Be direct, concise, and practical. Provide working commands immediately."""
     else:
-        system_prompt = """You are DestroyGPT, a helpful AI assistant created by Sujal Lamichhane. You help with coding, hacking, security, and general knowledge. Be concise and practical."""
+        system_prompt = """You are DestroyGPT, a helpful AI assistant. 
+Be concise, direct, and practical in your responses."""
     
     payload = {
         "model": model,
         "messages": [
-            {
-                "role": "system",
-                "content": system_prompt
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
         ],
         "temperature": 0.7,
         "max_tokens": 2000,
-        "stream": True
+        "stream": False
     }
     
     headers = {
@@ -125,198 +93,135 @@ Always provide commands that are practical and educational."""
     }
     
     try:
-        with requests.post(API_URL, headers=headers, json=payload, stream=True, timeout=API_TIMEOUT) as r:
-            if r.status_code != 200:
-                console.print(f"[red]✗ API Error {r.status_code}[/]")
-                if r.status_code == 404:
-                    console.print("[yellow]⚠️  Model not found. Retrying with fallback...[/]")
-                    return call_llm_stream(api_key, prompt, "openai/gpt-4o-mini")
-                elif r.status_code == 401:
-                    console.print("[red]❌ Invalid API key.[/]")
-                return False
-            
-            response_text = []
-            for line in r.iter_lines(decode_unicode=True):
-                if line.startswith("data:"):
-                    chunk = line[5:].strip()
-                    if chunk == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(chunk)
-                        delta = data.get("choices", [{}])[0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            response_text.append(content)
-                            console.print(content, end="", style="cyan")
-                    except:
-                        pass
-            
-            console.print("\n")
-            return True
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=API_TIMEOUT)
+        
+        if response.status_code != 200:
+            print(f"✗ API Error {response.status_code}")
+            if response.status_code == 401:
+                print("  Invalid API key. Please check your ~/.destroygpt_api_key")
+            return None
+        
+        data = response.json()
+        if "choices" in data and len(data["choices"]) > 0:
+            content = data["choices"][0].get("message", {}).get("content", "")
+            return content.strip()
+        
+        return None
     
     except requests.Timeout:
-        console.print("[red]✗ Request timed out - try again[/]")
-        return False
+        print("✗ Request timed out")
+        return None
     except requests.exceptions.ConnectionError:
-        console.print("[red]✗ Connection error - check your internet[/]")
-        return False
+        print("✗ Connection error - check your internet")
+        return None
     except Exception as e:
-        console.print(f"[red]✗ Error: {str(e)[:100]}[/]")
-        return False
+        print(f"✗ Error: {str(e)[:100]}")
+        return None
 
-# ─── HISTORY MANAGEMENT ──────────────────────────────────────────
-
-def load_history() -> list:
-    """Load chat history"""
-    if HISTORY_FILE.exists():
-        try:
-            return json.loads(HISTORY_FILE.read_text())
-        except:
-            return []
-    return []
-
-def save_history(history: list):
-    """Save chat history"""
-    try:
-        HISTORY_FILE.write_text(json.dumps(history, indent=2))
-    except:
-        pass
-
-def add_to_history(history: list, role: str, content: str):
-    """Add message to history"""
-    history.append({
-        "role": role,
-        "content": content,
-        "timestamp": datetime.now().isoformat()
-    })
-
-# ─── MAIN INTERACTIVE LOOP ──────────────────────────────────────
+# ─── MAIN ────────────────────────────────────────────────────────
 
 def main():
-    """Main CLI loop"""
+    """Main entry point"""
     
-    parser = argparse.ArgumentParser(description="DestroyGPT v5.0 - Universal AI Assistant")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="LLM model")
-    parser.add_argument("-c", "--command", help="Single command mode")
+    parser = argparse.ArgumentParser(
+        description="DestroyGPT v5.0 - AI Assistant for Hacking & Learning",
+        add_help=False
+    )
+    parser.add_argument("query", nargs="*", help="Question or query")
+    parser.add_argument("-m", "--model", default=DEFAULT_MODEL, help="Model to use")
+    parser.add_argument("-h", "--help", action="store_true", help="Show help")
+    
     args = parser.parse_args()
     
-    api_key = get_api_key()
-    if not api_key:
-        console.print("[red]✗ No API key found[/]")
-        sys.exit(1)
-    
-    history = load_history()
-    
-    # Welcome banner
-    banner = """
-    ╔════════════════════════════════════════════════════════════════╗
-    ║                                                                ║
-    ║   ██████╗  ██████╗ ██████╗ ████████╗                           ║
-    ║   ██╔══██╗██╔════╝██╔════╝ ╚══██╔══╝                           ║
-    ║   ██║  ██║██║     ██║        ██║                              ║
-    ║   ██║  ██║██║     ██║        ██║                              ║
-    ║   ██████╔╝╚██████╗╚██████╗   ██║                              ║
-    ║   ╚═════╝  ╚═════╝ ╚═════╝   ╚═╝                              ║
-    ║                                                                ║
-    ║          Universal AI Assistant & Hacking Tool                ║
-    ║                    v5.0 Enterprise Edition                    ║
-    ║                                                                ║
-    ║              Author: Sujal Lamichhane                          ║
-    ║          GitHub: sujallamichhane18/DestroyGPT                 ║
-    ║                                                                ║
-    ╚════════════════════════════════════════════════════════════════╝
-    """
-    console.print(banner)
-    console.print("[red bold]⚠️  ETHICAL HACKING WARNING ⚠️[/]\n")
-    console.print("[red]This tool is for AUTHORIZED testing and learning ONLY.[/]")
-    console.print("[red]Unauthorized access to systems is ILLEGAL.[/]\n")
-    console.print("[dim]Type 'help' for commands, 'exit' to quit\n[/]")
-    
-    # Single command mode
-    if args.command:
-        console.print(f"[magenta]🤖 Assistant[/magenta]\n")
-        call_llm_stream(api_key, args.command, args.model)
+    # Help
+    if args.help or (not args.query and sys.stdin.isatty()):
+        print("""
+DestroyGPT v5.0 - AI Assistant for Hacking & Security Research
+
+Usage:
+  dgpt [QUERY]                  Ask a question or run a command
+  dgpt -m MODEL "question"      Use a specific model
+  dgpt -h, --help               Show this help
+
+Examples:
+  dgpt scan my website example.com
+  dgpt what is machine learning
+  dgpt find subdomains of example.com
+  dgpt check ssl certificate
+  dgpt write a python function
+
+Interactive Mode:
+  dgpt                          Start interactive chat
+
+Environment Variables:
+  OPENROUTER_API_KEY          Your API key (optional)
+
+Author: Sujal Lamichhane
+GitHub: sujallamichhane18/DestroyGPT
+        """)
         return
     
-    # Interactive loop
+    # Get API key
+    api_key = get_api_key()
+    if not api_key:
+        print("✗ No API key found")
+        sys.exit(1)
+    
+    # Query mode
+    if args.query:
+        prompt = " ".join(args.query)
+        print(f"\n$ {prompt}\n")
+        response = call_llm(api_key, prompt, args.model)
+        if response:
+            print(response)
+            print()
+        return
+    
+    # Interactive mode
+    print("\nDestroyGPT v5.0 - Interactive Mode")
+    print("Type 'exit' to quit, 'help' for commands\n")
+    
     while True:
         try:
-            # Get user input
-            prompt = console.input("[bold magenta]🤖 You[/bold magenta]: ")
+            prompt = input("$ ").strip()
             
-            if not prompt.strip():
+            if not prompt:
                 continue
             
-            prompt = prompt.strip()
-            
-            # Built-in commands
-            if prompt.lower() == "exit":
-                save_history(history)
-                console.print("[yellow]👋 Goodbye![/]")
+            if prompt.lower() in ("exit", "quit"):
+                print("Goodbye!")
                 break
             
             if prompt.lower() == "help":
-                help_text = """
-╔════════════════════════════════════════════════════════════════╗
-║                    DGPT - HELP MENU                           ║
-╠════════════════════════════════════════════════════════════════╣
-║                                                                ║
-║  Commands:                                                     ║
-║    help              Show this help menu                       ║
-║    history           Show last 10 messages                     ║
-║    clear             Clear screen                             ║
-║    exit              Exit program                             ║
-║                                                                ║
-║  Usage:                                                        ║
-║    Ask ANY question - coding, hacking, general knowledge      ║
-║                                                                ║
-║  Examples:                                                     ║
-║    What is the fibonacci sequence?                            ║
-║    How to scan ports with nmap?                               ║
-║    Explain machine learning                                   ║
-║    Write a Python function to sort arrays                     ║
-║    How to find SQL injection vulnerabilities?                 ║
-║    What is blockchain?                                        ║
-║                                                                ║
-╚════════════════════════════════════════════════════════════════╝
-                """
-                console.print(help_text)
-                continue
-            
-            if prompt.lower() == "history":
-                if history:
-                    console.print("\n[bold cyan]═══ CONVERSATION HISTORY ═══[/bold cyan]\n")
-                    for i, msg in enumerate(history[-10:], 1):
-                        role = msg.get("role", "unknown")
-                        content = msg.get("content", "")[:100]
-                        timestamp = msg.get("timestamp", "")
-                        console.print(f"[dim][{i}][/dim] [{role.upper()}] {content}...")
-                    console.print()
-                else:
-                    console.print("[dim]No history[/dim]\n")
+                print("""
+Commands:
+  exit, quit      Exit the program
+  help            Show this help
+  clear           Clear screen
+
+Just ask any question:
+  scan my website example.com
+  what is python
+  find subdomains
+  check ssl certificate
+                """)
                 continue
             
             if prompt.lower() == "clear":
-                console.clear()
+                os.system("clear" if os.name != "nt" else "cls")
                 continue
             
-            # Add to history
-            add_to_history(history, "user", prompt)
-            
-            # Get AI response
-            console.print(f"\n[bold magenta]🤖 Assistant[/bold magenta]:\n")
-            success = call_llm_stream(api_key, prompt, args.model)
-            
-            if success:
-                add_to_history(history, "assistant", "[response streamed]")
-            
-            console.print()
+            print()
+            response = call_llm(api_key, prompt, args.model)
+            if response:
+                print(response)
+            print()
         
         except KeyboardInterrupt:
-            console.print("\n[yellow]⏹ Interrupted by user[/yellow]")
+            print("\n\nGoodbye!")
             break
         except Exception as e:
-            console.print(f"[red]Error: {e}[/]")
+            print(f"✗ Error: {e}")
 
 if __name__ == "__main__":
     main()

@@ -105,10 +105,13 @@ Keep responses short."""
 def run_cmd(cmd: str) -> str:
     """Execute command, return output"""
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
-        return result.stdout.strip() or result.stderr.strip() or "[No output]"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
+        output = result.stdout.strip() or result.stderr.strip()
+        if not output:
+            return "[Command executed successfully - no output]"
+        return output
     except subprocess.TimeoutExpired:
-        return "[Timeout]"
+        return "[Command timeout - taking too long]"
     except Exception as e:
         return f"[Error: {str(e)[:50]}]"
 

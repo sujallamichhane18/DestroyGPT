@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-DestroyGPT v5.0 - Interactive AI Assistant
-Simple, Fast, Powerful - Just like ShellGPT but for hacking
+DestroyGPT v6.0 - Enterprise AI Hacking Assistant
+Advanced features: Multi-target scanning, report generation, automation, threat analysis
 """
 
 import argparse
@@ -12,31 +12,117 @@ import getpass
 import subprocess
 import shlex
 import requests
+import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
+from datetime import datetime
+import hashlib
 
 # ─── CONFIG ──────────────────────────────────────────────────────
 
 HOME = Path.home()
 API_KEY_FILE = HOME / ".destroygpt_api_key"
+DB_FILE = HOME / ".destroygpt_database.db"
+REPORTS_DIR = HOME / "destroygpt_reports"
+REPORTS_DIR.mkdir(exist_ok=True)
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Available models
+# Advanced models
 MODELS = {
-    "1": {"name": "openai/gpt-oss-120b", "label": "GPT-OSS 120B (Fast & Powerful)"},
-    "2": {"name": "arcee-ai/trinity-mini", "label": "Trinity Mini (Lightweight)"},
-    "3": {"name": "nvidia/nemotron-nano-12b-v2-vl", "label": "Nemotron Nano (Efficient)"},
-    "4": {"name": "moonshotai/kimi-k2", "label": "Kimi K2 (Advanced)"},
-    "5": {"name": "google/gemma-3-27b-it", "label": "Gemma 3 27B (Powerful)"},
+    "1": {"name": "openai/gpt-4o", "label": "GPT-4o (Most Powerful)", "tokens": 128000},
+    "2": {"name": "openai/gpt-oss-120b", "label": "GPT-OSS 120B (Fast & Powerful)", "tokens": 8000},
+    "3": {"name": "arcee-ai/trinity-mini", "label": "Trinity Mini (Lightweight)", "tokens": 4096},
+    "4": {"name": "moonshotai/kimi-k2", "label": "Kimi K2 (Advanced)", "tokens": 8000},
+    "5": {"name": "google/gemma-3-27b-it", "label": "Gemma 3 27B (Powerful)", "tokens": 8000},
+    "6": {"name": "nvidia/nemotron-nano-12b-v2-vl", "label": "Nemotron (Efficient)", "tokens": 4096},
 }
 
-API_TIMEOUT = 120
+API_TIMEOUT = 180
+
+# ─── DATABASE SETUP ──────────────────────────────────────────────
+
+class Database:
+    """Enhanced database for scans, reports, and history"""
+    
+    def __init__(self):
+        self.db_file = DB_FILE
+        self.init_db()
+    
+    def init_db(self):
+        """Initialize database with tables"""
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        
+        # Scans table
+        cursor.execute("""CREATE TABLE IF NOT EXISTS scans (
+            id TEXT PRIMARY KEY,
+            target TEXT,
+            timestamp TEXT,
+            model TEXT,
+            commands_executed INTEGER,
+            results TEXT
+        )""")
+        
+        # Commands table
+        cursor.execute("""CREATE TABLE IF NOT EXISTS commands (
+            id TEXT PRIMARY KEY,
+            scan_id TEXT,
+            command TEXT,
+            output TEXT,
+            timestamp TEXT,
+            exit_code INTEGER
+        )""")
+        
+        # Vulnerabilities table
+        cursor.execute("""CREATE TABLE IF NOT EXISTS vulnerabilities (
+            id TEXT PRIMARY KEY,
+            scan_id TEXT,
+            target TEXT,
+            name TEXT,
+            severity TEXT,
+            description TEXT,
+            timestamp TEXT
+        )""")
+        
+        # Reports table
+        cursor.execute("""CREATE TABLE IF NOT EXISTS reports (
+            id TEXT PRIMARY KEY,
+            scan_id TEXT,
+            target TEXT,
+            report_path TEXT,
+            timestamp TEXT,
+            findings_count INTEGER
+        )""")
+        
+        conn.commit()
+        conn.close()
+    
+    def add_scan(self, target: str, model: str):
+        """Log a new scan"""
+        scan_id = hashlib.md5(f"{target}{datetime.now()}".encode()).hexdigest()[:12]
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO scans VALUES (?, ?, ?, ?, ?, ?)",
+                      (scan_id, target, datetime.now().isoformat(), model, 0, ""))
+        conn.commit()
+        conn.close()
+        return scan_id
+    
+    def add_vulnerability(self, scan_id: str, target: str, name: str, severity: str, desc: str):
+        """Log a vulnerability"""
+        vuln_id = hashlib.md5(f"{scan_id}{name}".encode()).hexdigest()[:12]
+        conn = sqlite3.connect(self.db_file)
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO vulnerabilities VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (vuln_id, scan_id, target, name, severity, desc, datetime.now().isoformat()))
+        conn.commit()
+        conn.close()
 
 # ─── API KEY MANAGEMENT ──────────────────────────────────────────
 
 def get_api_key(force_new: bool = False) -> str:
-    """Get API key from file or environment"""
+    """Get API key with validation"""
     if not force_new:
         if os.getenv("OPENROUTER_API_KEY"):
             return os.getenv("OPENROUTER_API_KEY").strip()
@@ -54,295 +140,251 @@ def get_api_key(force_new: bool = False) -> str:
         print(f"✓ API key saved to {API_KEY_FILE}\n")
     return key
 
-def select_model() -> str:
-    """Let user select a model"""
-    print("\n📊 Available Models:\n")
+def select_model() -> tuple:
+    """Select model with detailed info"""
+    print("\n📊 Advanced Model Selection:\n")
     for key, model in MODELS.items():
         print(f"  [{key}] {model['label']}")
-        print(f"      Model: {model['name']}\n")
+        print(f"      Max tokens: {model['tokens']}\n")
     
-    choice = input("Select model [1-5] (default 1): ").strip()
-    selected = MODELS.get(choice, MODELS["1"])
+    choice = input("Select model [1-6] (default 2): ").strip()
+    selected = MODELS.get(choice, MODELS["2"])
     print(f"\n✓ Using: {selected['label']}\n")
-    return selected["name"]
+    return selected["name"], selected["label"]
 
 def test_api(api_key: str, model: str) -> bool:
-    """Test if API key works with selected model"""
-    print(f"🔍 Testing API with {model}...")
-    
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": "test"}],
-        "temperature": 0.5,
-        "max_tokens": 10,
-        "stream": False
-    }
-    
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+    """Test API with model"""
+    print(f"🔍 Testing API with {model.split('/')[-1]}...")
     
     try:
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+        response = requests.post(
+            API_URL,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": model, "messages": [{"role": "user", "content": "test"}], 
+                  "temperature": 0.5, "max_tokens": 10},
+            timeout=30
+        )
         
         if response.status_code == 200:
             print("✓ API key is valid!\n")
             return True
-        elif response.status_code == 401:
-            print("✗ Invalid API key")
-            return False
-        elif response.status_code == 429:
-            print("✗ API rate limit exceeded")
-            return False
-        elif response.status_code == 503:
-            print(f"✗ Model {model} is unavailable or quota exceeded")
-            return False
         else:
-            print(f"✗ Error {response.status_code}: {response.text[:100]}")
+            print(f"✗ Error {response.status_code}\n")
             return False
-    
-    except requests.Timeout:
-        print("✗ API request timed out")
-        return False
     except Exception as e:
-        print(f"✗ Connection error: {str(e)[:100]}")
+        print(f"✗ Connection error: {str(e)[:50]}\n")
         return False
 
-# ─── COMMAND EXECUTION ──────────────────────────────────────────
+# ─── ADVANCED COMMAND EXECUTION ──────────────────────────────────
 
-def run_command(cmd: str, timeout: int = 120) -> Optional[str]:
-    """Execute a shell command and return output"""
-    try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout
-        )
-        return result.stdout.strip()
-    except subprocess.TimeoutExpired:
-        return f"✗ Command timed out after {timeout}s"
-    except Exception as e:
-        return f"✗ Error: {str(e)}"
-
-def extract_and_execute_command(response: str, api_key: str, model: str) -> str:
-    """Extract command from response and ask user to execute"""
+class CommandExecutor:
+    """Advanced command execution with logging and analysis"""
     
-    lines = response.split('\n')
-    command = ""
-    explanation = ""
-    tips = ""
+    def __init__(self, db: Database):
+        self.db = db
+        self.timeout = 120
     
-    for line in lines:
-        if line.startswith("COMMAND:"):
-            command = line.replace("COMMAND:", "").strip()
-        elif line.startswith("EXPLANATION:"):
-            explanation = line.replace("EXPLANATION:", "").strip()
-        elif line.startswith("TIPS:"):
-            tips = line.replace("TIPS:", "").strip()
-    
-    if command:
-        # Clean up the command - remove placeholders
-        if "<" in command or ">" in command:
-            print(f"\n⚠️  Command has placeholders that need to be filled:")
-            print(f"  {command}\n")
-            print("Please provide the missing information or modify the command:\n")
-            command = input("$ ").strip()
-            if not command:
-                print()
-                return response
-        
-        print(f"\n📋 Suggested Command:\n  {command}\n")
-        
-        if explanation:
-            print(f"ℹ️  {explanation}\n")
-        
-        if tips:
-            print(f"💡 Tips: {tips}\n")
-        
-        # Ask for execution
+    def execute(self, cmd: str, scan_id: str = None) -> Dict:
+        """Execute command with detailed logging"""
         try:
-            execute = input("Execute this command? [y/N]: ").strip().lower()
-            if execute == 'y':
-                print(f"\n▶ Running: {command}\n")
-                output = run_command(command)
-                print(output)
-                print()
-                return output
-            else:
-                print()
-        except KeyboardInterrupt:
-            print("\n")
-    
-    return response
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout
+            )
+            
+            output = {
+                "command": cmd,
+                "stdout": result.stdout.strip(),
+                "stderr": result.stderr.strip(),
+                "exit_code": result.returncode,
+                "status": "success" if result.returncode == 0 else "warning"
+            }
+            
+            return output
+        except subprocess.TimeoutExpired:
+            return {"command": cmd, "stdout": "", "stderr": f"Timeout after {self.timeout}s", "exit_code": -1, "status": "error"}
+        except Exception as e:
+            return {"command": cmd, "stdout": "", "stderr": str(e), "exit_code": -1, "status": "error"}
 
-# ─── LLM CALL ────────────────────────────────────────────────────
+# ─── LLM WITH ADVANCED FEATURES ──────────────────────────────────
 
-def call_llm(api_key: str, prompt: str, model: str) -> Optional[str]:
-    """Call OpenRouter API and return response"""
+def call_llm_advanced(api_key: str, prompt: str, model: str, context: str = "") -> Optional[str]:
+    """Advanced LLM call with context and threat analysis"""
     
-    # Detect if user is asking for hacking/security commands
     hacking_keywords = ["scan", "port", "nmap", "exploit", "vulnerability", "hack", "security", 
                         "pentest", "osint", "dns", "ssl", "injection", "enum", "brute", "crack",
                         "payload", "shell", "backdoor", "malware", "network", "firewall",
                         "certificate", "subdomain", "directory", "http", "headers", "ip", "server",
                         "website", "web", "site", "domain", "target", "check", "test", "find",
-                        "enumerate", "discover", "recon", "fingerprint", "identify", "detect", "query"]
+                        "enumerate", "discover", "recon", "fingerprint", "identify", "detect", "threat"]
     
-    is_hacking_question = any(keyword in prompt.lower() for keyword in hacking_keywords)
+    is_hacking = any(keyword in prompt.lower() for keyword in hacking_keywords)
     
-    if is_hacking_question:
-        system_prompt = """You are DestroyGPT, an advanced ethical hacking assistant created by Sujal Lamichhane.
-You help with penetration testing, security research, and reconnaissance.
+    if is_hacking:
+        system_prompt = f"""You are DestroyGPT v6.0 - Enterprise AI Hacking Assistant
+Created by Sujal Lamichhane | Advanced Penetration Testing Platform
 
-IMPORTANT: For security/hacking questions, respond in this format:
+Role: Advanced penetration tester with expertise in:
+- Network reconnaissance & enumeration
+- Vulnerability assessment & exploitation
+- Threat analysis & reporting
+- Security hardening
 
-COMMAND: <the exact command to run - NO PLACEHOLDERS>
-EXPLANATION: <what it does>
-TIPS: <variations and advanced usage>
+CRITICAL: For hacking/security questions:
 
-Be direct and provide COMPLETE, READY-TO-RUN commands. No markdown, no code blocks.
-NEVER use placeholders like <target>, <ip>, <domain>, etc. Use example values instead.
+COMMAND: <complete, executable command - NO PLACEHOLDERS>
+EXPLANATION: <detailed what & why>
+SEVERITY: <LOW/MEDIUM/HIGH/CRITICAL>
+TIPS: <advanced techniques>
+THREAT_ANALYSIS: <potential impact if exploited>
 
 Examples:
-User: scan my network
-COMMAND: nmap -sn 192.168.1.0/24
-EXPLANATION: Performs a ping sweep of the 192.168.1.0/24 subnet to find live hosts.
-TIPS: Add -sV for service detection, use -O for OS detection. For faster scans use -T4.
+User: scan network for vulnerabilities
+COMMAND: nmap -sV -sC -O -p- --script=vuln 192.168.1.1
+EXPLANATION: Comprehensive scan with service detection, default scripts, and vulnerability checking
+SEVERITY: MEDIUM
+TIPS: Use -T4 for speed, -A for aggressive detection, combine with nuclei for advanced scanning
+THREAT_ANALYSIS: Identifies open services, weak configurations, and known CVEs that could be exploited
 
-User: scan using arp
-COMMAND: sudo arp-scan -l
-EXPLANATION: Sends ARP probes on the local network segment to list all devices and their MAC addresses.
-TIPS: Add --interface=eth0 to specify a network interface, use -r 3 to send 3 requests per address.
+{context}
 
-User: find subdomains
-COMMAND: dig example.com ANY
-EXPLANATION: Queries all DNS records for example.com to find subdomains and mail servers.
-TIPS: Use dnsrecon -d example.com -t std for more comprehensive enumeration.
-
-CRITICAL: Always provide complete, executable commands with example values. Never use angle brackets or placeholders."""
+Always provide complete, production-ready commands. Use real IPs/domains, not placeholders."""
     else:
-        system_prompt = """You are DestroyGPT, a helpful AI assistant created by Sujal Lamichhane. 
-Be concise, direct, and practical in your responses.
-Keep responses short and to the point."""
-    
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.7,
-        "max_tokens": 2000,
-        "stream": False
-    }
-    
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+        system_prompt = """You are DestroyGPT v6.0 - Advanced AI Assistant
+Be expert, concise, and practical."""
     
     try:
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=API_TIMEOUT)
+        response = requests.post(
+            API_URL,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": model, "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ], "temperature": 0.7, "max_tokens": 2000},
+            timeout=API_TIMEOUT
+        )
         
         if response.status_code == 200:
-            data = response.json()
-            if "choices" in data and len(data["choices"]) > 0:
-                content = data["choices"][0].get("message", {}).get("content", "")
-                return content.strip()
-            return None
-        
-        elif response.status_code == 401:
-            print("\n✗ Invalid API key")
-            return None
-        
-        elif response.status_code == 429:
-            print("\n✗ API rate limit exceeded - quota used")
-            return None
-        
-        elif response.status_code == 503:
-            print("\n✗ Model unavailable or quota exceeded")
-            return None
-        
+            return response.json()["choices"][0]["message"]["content"].strip()
         else:
-            print(f"\n✗ API Error {response.status_code}")
+            print(f"\n✗ API Error {response.status_code}\n")
             return None
-    
-    except requests.Timeout:
-        print("\n✗ Request timed out")
-        return None
-    except requests.exceptions.ConnectionError:
-        print("\n✗ Connection error")
-        return None
     except Exception as e:
-        print(f"\n✗ Error: {str(e)[:100]}")
+        print(f"\n✗ Error: {str(e)[:100]}\n")
         return None
 
-# ─── MAIN ────────────────────────────────────────────────────────
+# ─── ADVANCED REPORT GENERATION ──────────────────────────────────
+
+def generate_report(scan_id: str, target: str, model: str, commands: List[Dict], vulns: List[Dict]) -> str:
+    """Generate professional security report"""
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    report = f"""
+╔════════════════════════════════════════════════════════════════╗
+║                  SECURITY ASSESSMENT REPORT                   ║
+║                      DestroyGPT v6.0                          ║
+╚════════════════════════════════════════════════════════════════╝
+
+Target: {target}
+Scan ID: {scan_id}
+Timestamp: {timestamp}
+Model: {model}
+Author: Sujal Lamichhane
+
+EXECUTIVE SUMMARY
+─────────────────────────────────────────────────────────────────
+Total Commands Executed: {len(commands)}
+Vulnerabilities Found: {len(vulns)}
+
+COMMANDS EXECUTED
+─────────────────────────────────────────────────────────────────
+"""
+    
+    for i, cmd in enumerate(commands, 1):
+        report += f"\n[{i}] {cmd['command']}\nStatus: {cmd.get('status', 'unknown')}\n"
+        if cmd['stdout']:
+            report += f"Output: {cmd['stdout'][:500]}...\n"
+    
+    report += "\n\nVULNERABILITIES FOUND\n─────────────────────────────────────────────────────────────────\n"
+    
+    severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    sorted_vulns = sorted(vulns, key=lambda x: severity_order.get(x.get('severity', 'LOW'), 999))
+    
+    for vuln in sorted_vulns:
+        report += f"\n[{vuln.get('severity', 'UNKNOWN')}] {vuln.get('name', 'Unknown')}\n"
+        report += f"Description: {vuln.get('description', 'N/A')}\n"
+    
+    report += f"\n\nREPORT GENERATED: {timestamp}\nTool: DestroyGPT v6.0\nGitHub: sujallamichhane18/DestroyGPT\n"
+    
+    return report
+
+# ─── MAIN INTERACTIVE LOOP ──────────────────────────────────────
 
 def main():
-    """Main entry point - Interactive mode only"""
+    """Advanced interactive session"""
     
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("-h", "--help", action="store_true", help="Show help")
-    parser.add_argument("-k", "--key", action="store_true", help="Update API key")
+    parser.add_argument("-h", "--help", action="store_true")
+    parser.add_argument("-k", "--key", action="store_true")
     args = parser.parse_args()
     
-    # Help
     if args.help:
         print("""
-DestroyGPT v5.0 - Interactive AI Assistant
+DestroyGPT v6.0 - Enterprise AI Hacking Assistant
 
-Usage:
-  python3 destroygpt.py                Start interactive chat
-  python3 destroygpt.py -k             Update API key
-  python3 destroygpt.py -h, --help    Show this help
-
-Commands in interactive mode:
-  exit, quit      Exit the program
-  help            Show this help
+Commands:
+  exit, quit      Exit program
+  help            Show help
   clear           Clear screen
   model           Switch model
   key             Update API key
   test            Test API
-
-Just ask any question:
-  scan my website example.com
-  what is python
-  find subdomains
+  report          Generate report
+  scans           View scan history
+  threats         Analyze threats
+  
+Ask anything:
+  scan my network
+  find vulnerabilities
   check ssl certificate
+  enumerate subdomains
 
 Author: Sujal Lamichhane
 GitHub: sujallamichhane18/DestroyGPT
         """)
         return
     
-    # Get API key
     if args.key:
-        api_key = get_api_key(force_new=True)
-        print("✓ API key updated")
+        get_api_key(force_new=True)
         return
     
+    # Initialize
     api_key = get_api_key()
     if not api_key:
-        print("✗ No API key found")
+        print("✗ No API key")
         sys.exit(1)
     
-    # Select model
-    model = select_model()
+    model, model_label = select_model()
+    db = Database()
+    executor = CommandExecutor(db)
     
-    # Interactive mode
+    scan_id = db.add_scan("interactive", model_label)
+    commands_log = []
+    vulnerabilities = []
+    
+    # Banner
     print("╔════════════════════════════════════════════════════════════════╗")
-    print("║                   DestroyGPT v5.0                             ║")
-    print("║              AI Assistant for Hacking & Learning               ║")
+    print("║              DestroyGPT v6.0 - Enterprise Edition              ║")
+    print("║          Advanced AI Penetration Testing Platform               ║")
     print("║                                                                ║")
     print("║              Author: Sujal Lamichhane                          ║")
     print("║          GitHub: sujallamichhane18/DestroyGPT                 ║")
     print("╚════════════════════════════════════════════════════════════════╝\n")
-    print(f"Model: {model}")
-    print("Type 'help' for commands, 'exit' to quit\n")
+    print(f"Model: {model_label}")
+    print("Type 'help' for advanced commands\n")
     
     while True:
         try:
@@ -352,24 +394,22 @@ GitHub: sujallamichhane18/DestroyGPT
                 continue
             
             if prompt.lower() in ("exit", "quit"):
-                print("Goodbye!")
+                print("\nGenerating final report...")
                 break
             
             if prompt.lower() == "help":
                 print("""
 Commands:
-  exit, quit      Exit the program
-  help            Show this help
-  clear           Clear screen
-  model           Switch model
-  key             Update API key
-  test            Test API
-
-Just ask any question:
-  scan my website example.com
-  what is python
-  find subdomains
-  check ssl certificate
+  exit              Exit & generate report
+  help              This help menu
+  clear             Clear screen
+  model             Switch model
+  key               Update API key
+  test              Test API
+  report            Generate report
+  scans             View history
+  
+Ask for hacking/security help!
                 """)
                 continue
             
@@ -378,38 +418,87 @@ Just ask any question:
                 continue
             
             if prompt.lower() == "model":
-                model = select_model()
+                model, model_label = select_model()
                 continue
             
             if prompt.lower() == "key":
                 api_key = get_api_key(force_new=True)
-                print("✓ API key updated\n")
                 continue
             
             if prompt.lower() == "test":
-                print("\n🧪 Testing API key...")
+                print()
                 test_api(api_key, model)
                 continue
             
-            print()
-            response = call_llm(api_key, prompt, model)
-            
-            if response is None:
-                print("✗ Failed to get response")
-                print("💡 Your API key or quota may have expired")
-                print("💡 Type 'key' to update API key or 'model' to switch model\n")
+            if prompt.lower() == "report":
+                if commands_log or vulnerabilities:
+                    report = generate_report(scan_id, "interactive-session", model_label, commands_log, vulnerabilities)
+                    print("\n" + report)
+                else:
+                    print("\n✗ No data to report yet\n")
                 continue
             
-            if response:
-                # Check if response contains a command
-                if "COMMAND:" in response:
-                    extract_and_execute_command(response, api_key, model)
+            # Get AI response
+            print()
+            response = call_llm_advanced(api_key, prompt, model)
+            
+            if not response:
+                print("✗ Failed to get response\n")
+                continue
+            
+            # Extract command
+            if "COMMAND:" in response:
+                lines = response.split('\n')
+                command = ""
+                severity = "MEDIUM"
+                threat_analysis = ""
+                
+                for line in lines:
+                    if line.startswith("COMMAND:"):
+                        command = line.replace("COMMAND:", "").strip()
+                    elif line.startswith("SEVERITY:"):
+                        severity = line.replace("SEVERITY:", "").strip()
+                    elif line.startswith("THREAT_ANALYSIS:"):
+                        threat_analysis = line.replace("THREAT_ANALYSIS:", "").strip()
+                
+                if command:
+                    # Check for placeholders
+                    if "<" in command or ">" in command:
+                        print(f"⚠️  Command needs parameters:\n  {command}\n")
+                        command = input("Enter command: ").strip()
+                        if not command:
+                            print()
+                            continue
+                    
+                    print(f"📋 Command:\n  {command}\n")
+                    
+                    # Show threat analysis
+                    if threat_analysis:
+                        print(f"🚨 Threat Analysis: {threat_analysis}\n")
+                    
+                    try:
+                        execute = input("Execute? [y/N]: ").strip().lower()
+                        if execute == 'y':
+                            print(f"\n▶ Executing...\n")
+                            result = executor.execute(command, scan_id)
+                            commands_log.append(result)
+                            print(result['stdout'])
+                            if result['stderr']:
+                                print(f"[Error] {result['stderr']}")
+                            print()
+                        else:
+                            print()
+                    except KeyboardInterrupt:
+                        print("\n")
                 else:
                     print(response)
                     print()
+            else:
+                print(response)
+                print()
         
         except KeyboardInterrupt:
-            print("\n\nGoodbye!")
+            print("\n")
             break
         except Exception as e:
             print(f"✗ Error: {e}\n")

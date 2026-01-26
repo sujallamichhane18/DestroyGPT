@@ -13,7 +13,8 @@ import getpass
 from pathlib import Path
 from typing import Optional
 
-import requests
+import subprocess
+import shlex
 
 # ─── CONFIG ──────────────────────────────────────────────────────
 
@@ -44,6 +45,65 @@ def get_api_key() -> str:
         print(f"✓ API key saved to {API_KEY_FILE}")
     return key
 
+# ─── COMMAND EXECUTION ──────────────────────────────────────────
+
+def run_command(cmd: str, timeout: int = 120) -> Optional[str]:
+    """Execute a shell command and return output"""
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+        return result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        return f"✗ Command timed out after {timeout}s"
+    except Exception as e:
+        return f"✗ Error: {str(e)}"
+
+def extract_and_execute_command(response: str, api_key: str, model: str) -> str:
+    """Extract command from response and ask user to execute"""
+    
+    lines = response.split('\n')
+    command = ""
+    explanation = ""
+    tips = ""
+    
+    for line in lines:
+        if line.startswith("COMMAND:"):
+            command = line.replace("COMMAND:", "").strip()
+        elif line.startswith("EXPLANATION:"):
+            explanation = line.replace("EXPLANATION:", "").strip()
+        elif line.startswith("TIPS:"):
+            tips = line.replace("TIPS:", "").strip()
+    
+    if command:
+        print(f"\n📋 Suggested Command:\n  {command}\n")
+        
+        if explanation:
+            print(f"ℹ️  {explanation}\n")
+        
+        if tips:
+            print(f"💡 Tips: {tips}\n")
+        
+        # Ask for execution
+        try:
+            execute = input("Execute this command? [y/N]: ").strip().lower()
+            if execute == 'y':
+                print(f"\n▶ Running: {command}\n")
+                output = run_command(command)
+                print(output)
+                print()
+                return output
+            else:
+                print()
+        except KeyboardInterrupt:
+            print("\n")
+    
+    return response
+
 # ─── LLM CALL ────────────────────────────────────────────────────
 
 def call_llm(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> Optional[str]:
@@ -63,18 +123,30 @@ def call_llm(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> Optional[
         system_prompt = """You are DestroyGPT, an advanced ethical hacking assistant created by Sujal Lamichhane.
 You help with penetration testing, security research, and reconnaissance.
 
-IMPORTANT: For security/hacking questions, ALWAYS respond with practical commands.
+IMPORTANT: For security/hacking questions, respond in this format:
 
-Format your response clearly with:
-- The command to execute
-- What it does
-- How to use it
-- Related commands
+COMMAND: <the exact command to run>
+EXPLANATION: <what it does>
+TIPS: <variations and advanced usage>
 
-Be direct, concise, and practical. Provide working commands immediately."""
+Be direct and provide working commands. No markdown, no code blocks.
+
+Examples:
+User: scan my website example.com
+COMMAND: nmap -sV -p- example.com && curl -I https://example.com
+EXPLANATION: nmap scans all ports and identifies services. curl gets HTTP headers revealing server info.
+TIPS: Add -A for aggressive scan, -O for OS detection, combine with whatweb for technology fingerprinting.
+
+User: find subdomains
+COMMAND: dnsrecon -d example.com -t std && dig example.com ANY
+EXPLANATION: dnsrecon enumerates DNS records to find subdomains. dig shows all DNS records.
+TIPS: Use fierce for brute forcing, amass for comprehensive enumeration.
+
+Always provide practical, working commands."""
     else:
         system_prompt = """You are DestroyGPT, a helpful AI assistant. 
-Be concise, direct, and practical in your responses."""
+Be concise, direct, and practical in your responses.
+Keep responses short and to the point."""
     
     payload = {
         "model": model,
@@ -173,7 +245,11 @@ GitHub: sujallamichhane18/DestroyGPT
         print(f"\n$ {prompt}\n")
         response = call_llm(api_key, prompt, args.model)
         if response:
-            print(response)
+            # Check if response contains a command
+            if "COMMAND:" in response:
+                extract_and_execute_command(response, api_key, args.model)
+            else:
+                print(response)
             print()
         return
     
@@ -214,7 +290,11 @@ Just ask any question:
             print()
             response = call_llm(api_key, prompt, args.model)
             if response:
-                print(response)
+                # Check if response contains a command
+                if "COMMAND:" in response:
+                    extract_and_execute_command(response, api_key, args.model)
+                else:
+                    print(response)
             print()
         
         except KeyboardInterrupt:

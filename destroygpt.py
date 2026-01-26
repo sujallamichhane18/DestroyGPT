@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-DestroyGPT v5.0 - ShellGPT-inspired Minimal AI Assistant
-Usage: python3 dgpt.py [QUERY]
+DestroyGPT v5.0 - Interactive AI Assistant
 Simple, Fast, Powerful - Just like ShellGPT but for hacking
 """
 
@@ -10,12 +9,11 @@ import json
 import os
 import sys
 import getpass
-from pathlib import Path
-from typing import Optional
-
 import subprocess
 import shlex
 import requests
+from pathlib import Path
+from typing import Optional
 
 # ─── CONFIG ──────────────────────────────────────────────────────
 
@@ -24,7 +22,7 @@ API_KEY_FILE = HOME / ".destroygpt_api_key"
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Available free models
+# Available models
 MODELS = {
     "1": {"name": "openai/gpt-oss-120b", "label": "GPT-OSS 120B (Fast & Powerful)"},
     "2": {"name": "arcee-ai/trinity-mini", "label": "Trinity Mini (Lightweight)"},
@@ -33,7 +31,6 @@ MODELS = {
     "5": {"name": "google/gemma-3-27b-it", "label": "Gemma 3 27B (Powerful)"},
 }
 
-DEFAULT_MODEL = MODELS["1"]["name"]
 API_TIMEOUT = 120
 
 # ─── API KEY MANAGEMENT ──────────────────────────────────────────
@@ -49,24 +46,24 @@ def get_api_key(force_new: bool = False) -> str:
             if key:
                 return key
     
-    print("🔑 Enter OpenRouter API key (hidden):")
+    print("\n🔑 Enter OpenRouter API key (hidden):")
     key = getpass.getpass().strip()
     if key:
         API_KEY_FILE.write_text(key)
         API_KEY_FILE.chmod(0o600)
-        print(f"✓ API key saved to {API_KEY_FILE}")
+        print(f"✓ API key saved to {API_KEY_FILE}\n")
     return key
 
 def select_model() -> str:
     """Let user select a model"""
-    print("\n📊 Available Free Models:\n")
+    print("\n📊 Available Models:\n")
     for key, model in MODELS.items():
         print(f"  [{key}] {model['label']}")
         print(f"      Model: {model['name']}\n")
     
     choice = input("Select model [1-5] (default 1): ").strip()
     selected = MODELS.get(choice, MODELS["1"])
-    print(f"✓ Using: {selected['label']}\n")
+    print(f"\n✓ Using: {selected['label']}\n")
     return selected["name"]
 
 def test_api(api_key: str, model: str) -> bool:
@@ -173,7 +170,7 @@ def extract_and_execute_command(response: str, api_key: str, model: str) -> str:
 
 # ─── LLM CALL ────────────────────────────────────────────────────
 
-def call_llm(api_key: str, prompt: str, model: str = DEFAULT_MODEL) -> Optional[str]:
+def call_llm(api_key: str, prompt: str, model: str) -> Optional[str]:
     """Call OpenRouter API and return response"""
     
     # Detect if user is asking for hacking/security commands
@@ -211,7 +208,7 @@ TIPS: Use fierce for brute forcing, amass for comprehensive enumeration.
 
 Always provide practical, working commands."""
     else:
-        system_prompt = """You are DestroyGPT, a helpful AI assistant. 
+        system_prompt = """You are DestroyGPT, a helpful AI assistant created by Sujal Lamichhane. 
 Be concise, direct, and practical in your responses.
 Keep responses short and to the point."""
     
@@ -270,40 +267,36 @@ Keep responses short and to the point."""
 # ─── MAIN ────────────────────────────────────────────────────────
 
 def main():
-    """Main entry point"""
+    """Main entry point - Interactive mode only"""
     
-    parser = argparse.ArgumentParser(
-        description="DestroyGPT v5.0 - AI Assistant for Hacking & Learning",
-        add_help=False
-    )
-    parser.add_argument("query", nargs="*", help="Question or query")
-    parser.add_argument("-m", "--model", default=DEFAULT_MODEL, help="Model to use")
+    parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("-h", "--help", action="store_true", help="Show help")
-    
+    parser.add_argument("-k", "--key", action="store_true", help="Update API key")
     args = parser.parse_args()
     
     # Help
-    if args.help or (not args.query and sys.stdin.isatty()):
+    if args.help:
         print("""
-DestroyGPT v5.0 - AI Assistant for Hacking & Security Research
+DestroyGPT v5.0 - Interactive AI Assistant
 
 Usage:
-  dgpt [QUERY]                  Ask a question or run a command
-  dgpt -m MODEL "question"      Use a specific model
-  dgpt -h, --help               Show this help
+  python3 destroygpt.py                Start interactive chat
+  python3 destroygpt.py -k             Update API key
+  python3 destroygpt.py -h, --help    Show this help
 
-Examples:
-  dgpt scan my website example.com
-  dgpt what is machine learning
-  dgpt find subdomains of example.com
-  dgpt check ssl certificate
-  dgpt write a python function
+Commands in interactive mode:
+  exit, quit      Exit the program
+  help            Show this help
+  clear           Clear screen
+  model           Switch model
+  key             Update API key
+  test            Test API
 
-Interactive Mode:
-  dgpt                          Start interactive chat
-
-Environment Variables:
-  OPENROUTER_API_KEY          Your API key (optional)
+Just ask any question:
+  scan my website example.com
+  what is python
+  find subdomains
+  check ssl certificate
 
 Author: Sujal Lamichhane
 GitHub: sujallamichhane18/DestroyGPT
@@ -311,28 +304,29 @@ GitHub: sujallamichhane18/DestroyGPT
         return
     
     # Get API key
+    if args.key:
+        api_key = get_api_key(force_new=True)
+        print("✓ API key updated")
+        return
+    
     api_key = get_api_key()
     if not api_key:
         print("✗ No API key found")
         sys.exit(1)
     
-    # Query mode
-    if args.query:
-        prompt = " ".join(args.query)
-        print(f"\n$ {prompt}\n")
-        response = call_llm(api_key, prompt, args.model)
-        if response:
-            # Check if response contains a command
-            if "COMMAND:" in response:
-                extract_and_execute_command(response, api_key, args.model)
-            else:
-                print(response)
-            print()
-        return
+    # Select model
+    model = select_model()
     
     # Interactive mode
-    print("\nDestroyGPT v5.0 - Interactive Mode")
-    print("Type 'exit' to quit, 'help' for commands\n")
+    print("╔════════════════════════════════════════════════════════════════╗")
+    print("║                   DestroyGPT v5.0                             ║")
+    print("║              AI Assistant for Hacking & Learning               ║")
+    print("║                                                                ║")
+    print("║              Author: Sujal Lamichhane                          ║")
+    print("║          GitHub: sujallamichhane18/DestroyGPT                 ║")
+    print("╚════════════════════════════════════════════════════════════════╝\n")
+    print(f"Model: {model}")
+    print("Type 'help' for commands, 'exit' to quit\n")
     
     while True:
         try:
@@ -351,6 +345,9 @@ Commands:
   exit, quit      Exit the program
   help            Show this help
   clear           Clear screen
+  model           Switch model
+  key             Update API key
+  test            Test API
 
 Just ask any question:
   scan my website example.com
@@ -364,21 +361,42 @@ Just ask any question:
                 os.system("clear" if os.name != "nt" else "cls")
                 continue
             
+            if prompt.lower() == "model":
+                model = select_model()
+                continue
+            
+            if prompt.lower() == "key":
+                api_key = get_api_key(force_new=True)
+                print("✓ API key updated\n")
+                continue
+            
+            if prompt.lower() == "test":
+                print("\n🧪 Testing API key...")
+                test_api(api_key, model)
+                continue
+            
             print()
-            response = call_llm(api_key, prompt, args.model)
+            response = call_llm(api_key, prompt, model)
+            
+            if response is None:
+                print("✗ Failed to get response")
+                print("💡 Your API key or quota may have expired")
+                print("💡 Type 'key' to update API key or 'model' to switch model\n")
+                continue
+            
             if response:
                 # Check if response contains a command
                 if "COMMAND:" in response:
-                    extract_and_execute_command(response, api_key, args.model)
+                    extract_and_execute_command(response, api_key, model)
                 else:
                     print(response)
-            print()
+                    print()
         
         except KeyboardInterrupt:
             print("\n\nGoodbye!")
             break
         except Exception as e:
-            print(f"✗ Error: {e}")
+            print(f"✗ Error: {e}\n")
 
 if __name__ == "__main__":
     main()

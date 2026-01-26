@@ -78,18 +78,35 @@ class AI:
 
 def extract_command(response):
     """Extract executable command from response"""
+    # Look for common command patterns
+    common_cmds = ['ping', 'nmap', 'dig', 'curl', 'ssh', 'nc', 'telnet', 'traceroute', 
+                   'whois', 'wireshark', 'tcpdump', 'netstat', 'ps', 'ls', 'cat', 'grep',
+                   'python', 'bash', 'sh', 'wget', 'apt', 'sudo', 'mkdir', 'rm', 'cp']
+    
     for line in response.split('\n'):
         line = line.strip()
-        if not line or line.startswith('#'):
+        
+        # Skip empty or comment lines
+        if not line or line.startswith('#') or line.startswith('|') or line.startswith('-'):
             continue
         
         # Remove markdown
         line = line.replace('```bash', '').replace('```sh', '').replace('```', '').strip()
         
-        # Check if looks like command
-        if any(cmd in line for cmd in ['ping', 'nmap', 'dig', 'curl', 'ssh', 'nc', 'telnet', 'traceroute', 'whois']):
+        # Skip if too long or looks like documentation
+        if len(line) > 200 or 'http' in line or '.md' in line:
+            continue
+        
+        # Check if starts with a known command
+        cmd_found = False
+        for cmd in common_cmds:
+            if line.lower().startswith(cmd):
+                cmd_found = True
+                break
+        
+        if cmd_found:
             # Skip if has placeholders
-            if '<' not in line and '>' not in line:
+            if '<' not in line and '>' not in line and '|' not in line and 'http' not in line:
                 return line
     
     return None

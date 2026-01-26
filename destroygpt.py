@@ -349,14 +349,14 @@ class CommandValidator:
 def print_banner():
     """Display startup banner"""
     banner = f"""{Colors.CYAN}{Colors.BOLD}
-╔═══════════════════════════════════════════════════════╗
-║                                                       ║
-║            🛡️  DestroyGPT v9.0                       ║
-║     AI-Powered Security Learning Assistant           ║
-║                                                       ║
-║     ⚠️  FOR AUTHORIZED USE ONLY ⚠️                   ║
-║                                                       ║
-╚═══════════════════════════════════════════════════════╝
+D)dddd     G)gggg P)ppppp  T)tttttt 
+D)   dd   G)      P)    pp    T)    
+D)    dd G)  ggg  P)ppppp     T)    
+D)    dd G)    gg P)          T)    
+D)    dd  G)   gg P)          T)    
+D)ddddd    G)ggg  P)          T)    
+                                    
+                                    
 {Colors.END}"""
     print(banner)
 

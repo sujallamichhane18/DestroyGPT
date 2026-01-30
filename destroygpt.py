@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-DestroyGPT v9.0 - Enhanced AI Security Assistant
-Improved intelligence, safety, and user experience
+DestroyGPT v10.0 - Intelligent & Flexible AI Security Assistant
+Major improvements: Plugin system, advanced AI, context awareness, safety profiles
 """
 
 import os
@@ -10,93 +10,357 @@ import json
 import shlex
 import subprocess
 import re
+import importlib.util
 from pathlib import Path
 from datetime import datetime
+from typing import Optional, Dict, List, Tuple, Any, Callable
+from dataclasses import dataclass, asdict
+from enum import Enum
 import requests
-from typing import Optional, Dict, List, Tuple
+from abc import ABC, abstractmethod
 
-# Configuration
+# ============================================================================
+# Configuration & Constants
+# ============================================================================
+
 HOME = Path.home()
 CONFIG_DIR = HOME / ".destroygpt"
-CONFIG_DIR.mkdir(exist_ok=True)
+PLUGINS_DIR = CONFIG_DIR / "plugins"
 
+# Create directories
+CONFIG_DIR.mkdir(exist_ok=True)
+PLUGINS_DIR.mkdir(exist_ok=True)
+
+# File paths
 API_KEY_FILE = CONFIG_DIR / "api_key"
 HISTORY_FILE = CONFIG_DIR / "history.json"
 LOG_FILE = CONFIG_DIR / "session_log.txt"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+CONTEXT_FILE = CONFIG_DIR / "context.json"
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Default command timeout
-DEFAULT_TIMEOUT = 30
+# ============================================================================
+# Enums & Data Classes
+# ============================================================================
 
-# Simple blocked patterns - basic safety only
-BLOCKED_PATTERNS = [
-    r'\brm\b', r'\bsudo\b', r'\bsu\b'
-]
+class SafetyLevel(Enum):
+    """Safety profile levels"""
+    STRICT = "strict"          # Maximum safety, minimal commands
+    MODERATE = "moderate"      # Balanced approach
+    PERMISSIVE = "permissive"  # Minimal restrictions, user responsibility
+    CUSTOM = "custom"          # User-defined rules
 
-# AI Models with detailed info
-MODELS = {
-    "1": {
-        "id": "openai/gpt-4o",
-        "name": "GPT-4o",
-        "speed": "Fast",
-        "quality": "Excellent",
-        "best_for": "Complex security concepts"
-    },
-    "2": {
-        "id": "google/gemini-2.0-flash-exp:free",
-        "name": "Gemini 2.0 Flash",
-        "speed": "Very Fast",
-        "quality": "Very Good",
-        "best_for": "Quick responses, free tier"
-    },
-    "3": {
-        "id": "meta-llama/llama-3.1-8b-instruct:free",
-        "name": "Llama 3.1 8B",
-        "speed": "Fast",
-        "quality": "Good",
-        "best_for": "Educational queries, free tier"
-    },
-    "4": {
-        "id": "anthropic/claude-3.5-sonnet",
-        "name": "Claude 3.5 Sonnet",
-        "speed": "Fast",
-        "quality": "Excellent",
-        "best_for": "Detailed explanations"
-    },
-}
+class CommandRisk(Enum):
+    """Command risk classification"""
+    SAFE = "safe"              # Read-only, no side effects
+    LOW = "low"                # Minimal impact possible
+    MEDIUM = "medium"          # Could affect local system
+    HIGH = "high"              # Could affect remote systems
+    CRITICAL = "critical"      # Destructive potential
 
-# Color codes for terminal
+@dataclass
+class CommandInfo:
+    """Enhanced command metadata"""
+    command: str
+    risk_level: CommandRisk
+    requires_root: bool = False
+    requires_network: bool = False
+    timeout: int = 30
+    description: str = ""
+    category: str = "general"
+    
+@dataclass
+class UserContext:
+    """Track user context for better AI responses"""
+    skill_level: str = "intermediate"  # beginner, intermediate, advanced, expert
+    preferred_style: str = "detailed"   # brief, detailed, technical
+    last_commands: List[str] = None
+    session_goals: List[str] = None
+    safety_profile: SafetyLevel = SafetyLevel.MODERATE
+    
+    def __post_init__(self):
+        if self.last_commands is None:
+            self.last_commands = []
+        if self.session_goals is None:
+            self.session_goals = []
+
+# ============================================================================
+# Color Scheme
+# ============================================================================
+
 class Colors:
+    """Extended color palette"""
     HEADER = '\033[95m'
     BLUE = '\033[94m'
     CYAN = '\033[96m'
     GREEN = '\033[92m'
     YELLOW = '\033[93m'
     RED = '\033[91m'
+    MAGENTA = '\033[35m'
+    WHITE = '\033[97m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
+    DIM = '\033[2m'
     END = '\033[0m'
-
-
-class EnhancedAI:
-    """Enhanced AI with better prompting, context, and safety"""
     
-    def __init__(self, api_key: str, model_id: str):
+    @staticmethod
+    def wrap(text: str, color: str) -> str:
+        return f"{color}{text}{Colors.END}"
+
+# ============================================================================
+# Configuration Manager
+# ============================================================================
+
+class ConfigManager:
+    """Manage application configuration with persistence"""
+    
+    DEFAULT_CONFIG = {
+        "safety_level": "moderate",
+        "default_model": "openai/gpt-4o",
+        "api_timeout": 60,
+        "max_history": 50,
+        "command_timeout": 30,
+        "log_commands": True,
+        "auto_save": True,
+        "show_thinking": False,
+        "colored_output": True,
+        "user_context": {
+            "skill_level": "intermediate",
+            "preferred_style": "detailed"
+        }
+    }
+    
+    def __init__(self):
+        self.config = self.load()
+    
+    def load(self) -> Dict:
+        """Load configuration from file"""
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    loaded = json.load(f)
+                    # Merge with defaults to add any new keys
+                    return {**self.DEFAULT_CONFIG, **loaded}
+            except Exception as e:
+                print(f"{Colors.YELLOW}⚠️  Config load error: {e}, using defaults{Colors.END}")
+        return self.DEFAULT_CONFIG.copy()
+    
+    def save(self):
+        """Save configuration to file"""
+        try:
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(self.config, f, indent=2)
+        except Exception as e:
+            print(f"{Colors.YELLOW}⚠️  Could not save config: {e}{Colors.END}")
+    
+    def get(self, key: str, default=None):
+        """Get config value"""
+        return self.config.get(key, default)
+    
+    def set(self, key: str, value):
+        """Set config value"""
+        self.config[key] = value
+        if self.config.get('auto_save', True):
+            self.save()
+    
+    def update(self, updates: Dict):
+        """Update multiple config values"""
+        self.config.update(updates)
+        if self.config.get('auto_save', True):
+            self.save()
+
+# ============================================================================
+# Plugin System
+# ============================================================================
+
+class Plugin(ABC):
+    """Base class for plugins"""
+    
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Plugin name"""
+        pass
+    
+    @property
+    @abstractmethod
+    def version(self) -> str:
+        """Plugin version"""
+        pass
+    
+    @abstractmethod
+    def on_load(self, config: Dict):
+        """Called when plugin is loaded"""
+        pass
+    
+    def on_command_pre_execute(self, command: str) -> Tuple[bool, str]:
+        """Called before command execution. Return (continue, message)"""
+        return True, ""
+    
+    def on_command_post_execute(self, command: str, output: str, success: bool):
+        """Called after command execution"""
+        pass
+    
+    def on_query(self, query: str) -> Optional[str]:
+        """Called on user query. Return response to intercept, None to pass through"""
+        return None
+    
+    def get_commands(self) -> Dict[str, Callable]:
+        """Return dict of custom commands: {name: function}"""
+        return {}
+
+class PluginManager:
+    """Manage plugin loading and execution"""
+    
+    def __init__(self, config: ConfigManager):
+        self.config = config
+        self.plugins: List[Plugin] = []
+        self.custom_commands: Dict[str, Callable] = {}
+    
+    def load_plugins(self):
+        """Load all plugins from plugins directory"""
+        if not PLUGINS_DIR.exists():
+            return
+        
+        for plugin_file in PLUGINS_DIR.glob("*.py"):
+            if plugin_file.name.startswith("_"):
+                continue
+            
+            try:
+                # Load module dynamically
+                spec = importlib.util.spec_from_file_location(
+                    plugin_file.stem, plugin_file
+                )
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                
+                # Find Plugin subclasses
+                for item_name in dir(module):
+                    item = getattr(module, item_name)
+                    if (isinstance(item, type) and 
+                        issubclass(item, Plugin) and 
+                        item != Plugin):
+                        plugin = item()
+                        plugin.on_load(self.config.config)
+                        self.plugins.append(plugin)
+                        
+                        # Register custom commands
+                        self.custom_commands.update(plugin.get_commands())
+                        
+                        print(f"{Colors.GREEN}✓ Loaded plugin: {plugin.name} v{plugin.version}{Colors.END}")
+            
+            except Exception as e:
+                print(f"{Colors.YELLOW}⚠️  Failed to load {plugin_file.name}: {e}{Colors.END}")
+    
+    def on_command_pre_execute(self, command: str) -> Tuple[bool, str]:
+        """Call all plugin pre-execute hooks"""
+        for plugin in self.plugins:
+            should_continue, message = plugin.on_command_pre_execute(command)
+            if not should_continue:
+                return False, message
+        return True, ""
+    
+    def on_command_post_execute(self, command: str, output: str, success: bool):
+        """Call all plugin post-execute hooks"""
+        for plugin in self.plugins:
+            plugin.on_command_post_execute(command, output, success)
+    
+    def on_query(self, query: str) -> Optional[str]:
+        """Call plugin query hooks"""
+        for plugin in self.plugins:
+            response = plugin.on_query(query)
+            if response:
+                return response
+        return None
+
+# ============================================================================
+# Enhanced AI System
+# ============================================================================
+
+class AIModelProvider:
+    """Abstraction for different AI providers"""
+    
+    MODELS = {
+        "openai/gpt-4o": {
+            "name": "GPT-4o",
+            "provider": "OpenAI",
+            "speed": "Fast",
+            "quality": "Excellent",
+            "cost": "$$",
+            "context_window": 128000,
+            "best_for": "Complex security analysis, detailed explanations"
+        },
+        "anthropic/claude-3.5-sonnet": {
+            "name": "Claude 3.5 Sonnet",
+            "provider": "Anthropic",
+            "speed": "Fast",
+            "quality": "Excellent",
+            "cost": "$$",
+            "context_window": 200000,
+            "best_for": "Thorough analysis, code review, safety checks"
+        },
+        "google/gemini-2.0-flash-exp:free": {
+            "name": "Gemini 2.0 Flash",
+            "provider": "Google",
+            "speed": "Very Fast",
+            "quality": "Very Good",
+            "cost": "Free",
+            "context_window": 32000,
+            "best_for": "Quick responses, real-time assistance"
+        },
+        "meta-llama/llama-3.1-8b-instruct:free": {
+            "name": "Llama 3.1 8B",
+            "provider": "Meta",
+            "speed": "Fast",
+            "quality": "Good",
+            "cost": "Free",
+            "context_window": 8000,
+            "best_for": "Educational queries, practice"
+        },
+        "deepseek/deepseek-chat": {
+            "name": "DeepSeek Chat",
+            "provider": "DeepSeek",
+            "speed": "Fast",
+            "quality": "Very Good",
+            "cost": "$",
+            "context_window": 64000,
+            "best_for": "Technical analysis, coding tasks"
+        }
+    }
+    
+    @classmethod
+    def list_models(cls) -> List[Tuple[str, Dict]]:
+        """Get list of available models"""
+        return list(cls.MODELS.items())
+    
+    @classmethod
+    def get_model_info(cls, model_id: str) -> Optional[Dict]:
+        """Get model information"""
+        return cls.MODELS.get(model_id)
+
+class IntelligentAI:
+    """Enhanced AI with context awareness and intelligent prompting"""
+    
+    def __init__(self, api_key: str, model_id: str, config: ConfigManager, 
+                 user_context: UserContext):
         self.api_key = api_key
         self.model_id = model_id
+        self.config = config
+        self.user_context = user_context
         self.history = []
         self.session_start = datetime.now()
+        self.conversation_topics = []
         self.load_history()
     
     def load_history(self):
-        """Load conversation history"""
+        """Load conversation history with size limit"""
         if HISTORY_FILE.exists():
             try:
                 with open(HISTORY_FILE, 'r') as f:
                     data = json.load(f)
-                    self.history = data[-20:]  # Keep last 20 messages
+                    max_history = self.config.get('max_history', 50)
+                    self.history = data[-max_history:]
             except Exception as e:
                 print(f"{Colors.YELLOW}⚠️  Could not load history: {e}{Colors.END}")
                 self.history = []
@@ -109,8 +373,18 @@ class EnhancedAI:
         except Exception as e:
             print(f"{Colors.YELLOW}⚠️  Could not save history: {e}{Colors.END}")
     
+    def save_context(self):
+        """Save user context"""
+        try:
+            with open(CONTEXT_FILE, 'w') as f:
+                json.dump(asdict(self.user_context), f, indent=2)
+        except:
+            pass
+    
     def log_session(self, event: str):
         """Log session events"""
+        if not self.config.get('log_commands', True):
+            return
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with open(LOG_FILE, 'a') as f:
@@ -118,20 +392,142 @@ class EnhancedAI:
         except:
             pass
     
-    def ask(self, prompt: str, context: Optional[Dict] = None) -> str:
-        """Enhanced AI query with better prompting"""
+    def _analyze_query(self, query: str) -> Dict[str, Any]:
+        """Analyze user query to extract intent and context"""
+        analysis = {
+            'is_question': '?' in query,
+            'is_command_request': any(word in query.lower() for word in 
+                ['how', 'show', 'demonstrate', 'example', 'command', 'syntax']),
+            'is_explanation_request': any(word in query.lower() for word in
+                ['explain', 'what is', 'why', 'difference', 'describe']),
+            'mentions_specific_tool': None,
+            'difficulty_indicators': []
+        }
         
-        # Build comprehensive system prompt
-        system_prompt = self._build_system_prompt(context)
+        # Detect tool mentions
+        tools = ['nmap', 'wireshark', 'metasploit', 'burp', 'sqlmap', 
+                 'nikto', 'john', 'hashcat', 'hydra', 'aircrack']
+        for tool in tools:
+            if tool in query.lower():
+                analysis['mentions_specific_tool'] = tool
+                break
         
-        # Build message list with context
+        # Detect difficulty level
+        if any(word in query.lower() for word in ['basic', 'simple', 'beginner', 'start']):
+            analysis['difficulty_indicators'].append('beginner')
+        if any(word in query.lower() for word in ['advanced', 'complex', 'detailed', 'deep']):
+            analysis['difficulty_indicators'].append('advanced')
+        
+        return analysis
+    
+    def _build_system_prompt(self, query_analysis: Dict) -> str:
+        """Build context-aware system prompt"""
+        
+        skill_prompts = {
+            'beginner': 'The user is a beginner. Provide clear, step-by-step explanations with context.',
+            'intermediate': 'The user has some experience. Balance detail with practical examples.',
+            'advanced': 'The user is experienced. Provide technical depth and advanced concepts.',
+            'expert': 'The user is an expert. Focus on nuance, edge cases, and optimization.'
+        }
+        
+        style_prompts = {
+            'brief': 'Be concise and to-the-point. Provide essential information only.',
+            'detailed': 'Provide comprehensive explanations with examples and context.',
+            'technical': 'Use precise technical language. Include implementation details.'
+        }
+        
+        base_prompt = f"""You are an expert cybersecurity educator and ethical hacking instructor with deep knowledge of:
+- Network security and reconnaissance
+- Penetration testing methodologies
+- Common vulnerabilities and exploitation techniques
+- Defensive security measures
+- Security tools and their proper usage
+
+## User Profile
+{skill_prompts.get(self.user_context.skill_level, skill_prompts['intermediate'])}
+{style_prompts.get(self.user_context.preferred_style, style_prompts['detailed'])}
+
+## Safety Profile: {self.user_context.safety_profile.value}
+- ALWAYS emphasize legal and ethical considerations
+- Remind users to only test authorized systems
+- Explain potential risks and consequences
+- Suggest safe alternatives when applicable
+
+## Response Guidelines
+
+### When suggesting commands:
+1. **Explain first**: Describe what the command does and why
+2. **Show the command**: Present it clearly on its own line
+3. **Explain parameters**: Break down each flag/option
+4. **Expected output**: Describe what results to expect
+5. **Safety notes**: Mention any risks or legal considerations
+
+### Command Format:
+When providing a command, format it like this:
+```bash
+command --flags arguments
+```
+
+### Use Real Examples:
+- Safe domains: example.com, google.com, cloudflare.com, github.com
+- Public DNS: 8.8.8.8, 1.1.1.1
+- Avoid private IPs unless explicitly discussing local testing
+
+### Prohibited Content:
+- Destructive commands (rm -rf, dd, mkfs)
+- Actual exploit code or shellcode
+- Malware or backdoor implementations
+- Commands targeting real systems without authorization
+
+## Context
+"""
+        
+        # Add query-specific context
+        if query_analysis['mentions_specific_tool']:
+            base_prompt += f"\nQuery mentions: {query_analysis['mentions_specific_tool']}\n"
+        
+        if query_analysis['is_command_request']:
+            base_prompt += "User wants a practical command example.\n"
+        
+        if query_analysis['is_explanation_request']:
+            base_prompt += "User wants conceptual understanding.\n"
+        
+        # Add recent command context
+        if self.user_context.last_commands:
+            recent = self.user_context.last_commands[-3:]
+            base_prompt += f"\nRecent commands executed: {', '.join(recent)}\n"
+        
+        # Add session goals
+        if self.user_context.session_goals:
+            base_prompt += f"\nSession goals: {', '.join(self.user_context.session_goals)}\n"
+        
+        return base_prompt
+    
+    def ask(self, prompt: str, show_thinking: bool = False) -> str:
+        """Enhanced query with context awareness"""
+        
+        # Analyze query
+        query_analysis = self._analyze_query(prompt)
+        
+        # Build context-aware system prompt
+        system_prompt = self._build_system_prompt(query_analysis)
+        
+        # Build messages with relevant history
         messages = [{"role": "system", "content": system_prompt}]
         
-        # Add relevant history (last 3 exchanges)
-        messages.extend(self.history[-6:])
+        # Add relevant history (smart truncation based on model context window)
+        model_info = AIModelProvider.get_model_info(self.model_id)
+        context_window = model_info.get('context_window', 8000) if model_info else 8000
+        
+        # Simple heuristic: keep last 10 exchanges or fewer if context is limited
+        history_limit = min(10, context_window // 1000)
+        messages.extend(self.history[-(history_limit * 2):])
         
         # Add current query
         messages.append({"role": "user", "content": prompt})
+        
+        if show_thinking or self.config.get('show_thinking', False):
+            print(f"\n{Colors.DIM}[Thinking with {len(messages)} context messages...]{Colors.END}\n")
         
         try:
             response = requests.post(
@@ -140,16 +536,16 @@ class EnhancedAI:
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
                     "HTTP-Referer": "https://github.com/destroygpt",
-                    "X-Title": "DestroyGPT"
+                    "X-Title": "DestroyGPT Enhanced"
                 },
                 json={
                     "model": self.model_id,
                     "messages": messages,
                     "temperature": 0.7,
-                    "max_tokens": 1500,
+                    "max_tokens": 2000,
                     "top_p": 0.9,
                 },
-                timeout=30
+                timeout=self.config.get('api_timeout', 60)
             )
             
             if response.status_code == 200:
@@ -161,158 +557,219 @@ class EnhancedAI:
                 self.history.append({"role": "assistant", "content": content})
                 self.save_history()
                 
+                # Extract topics for better context
+                self._extract_topics(prompt, content)
+                
                 # Log query
                 self.log_session(f"Query: {prompt[:100]}")
                 
                 return content
             
-            elif response.status_code == 401:
-                return f"{Colors.RED}❌ API Error: Invalid API key. Check your credentials.{Colors.END}"
-            elif response.status_code == 429:
-                return f"{Colors.RED}❌ Rate limited. Please wait a moment and try again.{Colors.END}"
             else:
-                error_msg = "Unknown error"
-                try:
-                    error_data = response.json()
-                    if 'error' in error_data:
-                        error_msg = error_data['error'].get('message', error_msg)
-                except:
-                    pass
-                return f"{Colors.RED}❌ API Error ({response.status_code}): {error_msg}{Colors.END}"
+                return self._handle_api_error(response)
         
         except requests.exceptions.Timeout:
-            return f"{Colors.RED}❌ Request timeout. The API took too long to respond.{Colors.END}"
+            return f"{Colors.RED}❌ Request timeout. Try a simpler query or check your connection.{Colors.END}"
         except requests.exceptions.ConnectionError:
             return f"{Colors.RED}❌ Connection error. Check your internet connection.{Colors.END}"
         except Exception as e:
             return f"{Colors.RED}❌ Error: {str(e)}{Colors.END}"
     
-    def _build_system_prompt(self, context: Optional[Dict] = None) -> str:
-        """Build comprehensive system prompt"""
-        
-        base_prompt = """You are an expert cybersecurity educator and ethical hacking instructor. Your role is to:
-
-1. **Educate**: Explain security concepts clearly, accurately, and in-depth
-2. **Guide Safely**: Only suggest safe, read-only commands that won't damage systems
-3. **Emphasize Ethics**: Always remind users to only test authorized systems
-4. **Be Practical**: Provide real, working examples that users can learn from
-
-## Available Commands
-You can suggest any standard Linux/Unix commands for security learning and reconnaissance.
-Focus on educational value and practical examples.
-
-Common useful commands include:
-- Network: ping, dig, nslookup, whois, traceroute, host, nmap, netstat, ss
-- File operations: ls, cat, grep, find, file
-- System info: whoami, uname, ps, top
-- Web: curl, wget
-- And any other standard commands that help with learning
-
-## Prohibited Content
-Avoid suggesting:
-- Commands that could damage systems (rm -rf /, mkfs, dd to devices)
-- Malicious payloads or shellcode
-- Commands requiring root without explanation (sudo, su)
-
-## Response Format
-When suggesting commands:
-1. Explain the concept first
-2. Show the command on its own line clearly
-3. Explain what the command does
-4. Mention what output to expect
-5. Add safety/legal reminders when relevant
-
-## Examples to Use
-Always use real, safe examples:
-- Domains: example.com, google.com, github.com, cloudflare.com
-- IPs: 8.8.8.8, 1.1.1.1, 93.184.216.34
-- Never use: localhost, 192.168.x.x, 10.x.x.x (unless explicitly asked about local testing)
-
-## Tone
-Be friendly, encouraging, and educational. Help users understand WHY things work, not just HOW."""
-
-        # Add context if provided
-        if context:
-            if context.get('last_command'):
-                base_prompt += f"\n\n## Recent Context\nUser just ran: {context['last_command']}"
-            if context.get('user_level'):
-                base_prompt += f"\nUser skill level: {context['user_level']}"
-        
-        return base_prompt
-
-
-class CommandValidator:
-    """Enhanced command validation with detailed feedback"""
+    def _handle_api_error(self, response) -> str:
+        """Handle API errors with helpful messages"""
+        if response.status_code == 401:
+            return f"{Colors.RED}❌ Invalid API key. Check your credentials at ~/.destroygpt/api_key{Colors.END}"
+        elif response.status_code == 429:
+            return f"{Colors.RED}❌ Rate limited. Wait a moment or upgrade your plan at openrouter.ai{Colors.END}"
+        elif response.status_code == 402:
+            return f"{Colors.RED}❌ Insufficient credits. Add credits at openrouter.ai{Colors.END}"
+        else:
+            error_msg = "Unknown error"
+            try:
+                error_data = response.json()
+                if 'error' in error_data:
+                    error_msg = error_data['error'].get('message', error_msg)
+            except:
+                pass
+            return f"{Colors.RED}❌ API Error ({response.status_code}): {error_msg}{Colors.END}"
     
-    @staticmethod
-    def extract_commands(text: str) -> List[str]:
-        """Extract potential commands from AI response"""
+    def _extract_topics(self, query: str, response: str):
+        """Extract conversation topics for better context"""
+        # Simple keyword extraction (could be enhanced with NLP)
+        keywords = ['nmap', 'scan', 'dns', 'port', 'network', 'security', 
+                   'vulnerability', 'exploit', 'web', 'sql', 'xss']
+        
+        text = (query + " " + response).lower()
+        for keyword in keywords:
+            if keyword in text and keyword not in self.conversation_topics:
+                self.conversation_topics.append(keyword)
+                if len(self.conversation_topics) > 10:
+                    self.conversation_topics.pop(0)
+
+# ============================================================================
+# Enhanced Command System
+# ============================================================================
+
+class CommandDatabase:
+    """Database of known commands with metadata"""
+    
+    COMMAND_DB = {
+        'ping': CommandInfo('ping', CommandRisk.SAFE, requires_network=True,
+                          description='Send ICMP echo requests', category='network'),
+        'dig': CommandInfo('dig', CommandRisk.SAFE, requires_network=True,
+                         description='DNS lookup', category='dns'),
+        'nslookup': CommandInfo('nslookup', CommandRisk.SAFE, requires_network=True,
+                              description='Query DNS servers', category='dns'),
+        'whois': CommandInfo('whois', CommandRisk.SAFE, requires_network=True,
+                           description='Domain registration info', category='recon'),
+        'traceroute': CommandInfo('traceroute', CommandRisk.SAFE, requires_network=True,
+                                description='Trace network path', category='network'),
+        'nmap': CommandInfo('nmap', CommandRisk.MEDIUM, requires_network=True,
+                          timeout=120, description='Network scanner', category='scan'),
+        'curl': CommandInfo('curl', CommandRisk.LOW, requires_network=True,
+                          description='Transfer data with URLs', category='web'),
+        'wget': CommandInfo('wget', CommandRisk.LOW, requires_network=True,
+                          description='Download files', category='web'),
+        'netstat': CommandInfo('netstat', CommandRisk.SAFE,
+                             description='Network statistics', category='network'),
+        'ss': CommandInfo('ss', CommandRisk.SAFE,
+                        description='Socket statistics', category='network'),
+    }
+    
+    @classmethod
+    def get_command_info(cls, command: str) -> Optional[CommandInfo]:
+        """Get command information"""
+        return cls.COMMAND_DB.get(command)
+    
+    @classmethod
+    def get_by_category(cls, category: str) -> List[CommandInfo]:
+        """Get commands by category"""
+        return [cmd for cmd in cls.COMMAND_DB.values() if cmd.category == category]
+
+class SmartCommandValidator:
+    """Intelligent command validation with safety profiles"""
+    
+    def __init__(self, safety_level: SafetyLevel = SafetyLevel.MODERATE):
+        self.safety_level = safety_level
+        self.blocked_patterns = self._get_blocked_patterns()
+    
+    def _get_blocked_patterns(self) -> List[str]:
+        """Get blocked patterns based on safety level"""
+        base_patterns = [
+            r'\brm\s+-rf\b',  # Recursive force delete
+            r'\bmkfs\b',      # Format filesystem
+            r'\bdd\s+if=.*of=/dev/',  # Disk operations
+        ]
+        
+        if self.safety_level == SafetyLevel.STRICT:
+            base_patterns.extend([
+                r'\bsudo\b', r'\bsu\b',  # Privilege escalation
+                r'>\s*/dev/',             # Write to devices
+                r'\bchmod\s+777\b',       # Insecure permissions
+            ])
+        elif self.safety_level == SafetyLevel.MODERATE:
+            base_patterns.extend([
+                r'\bsudo\s+rm\b',  # Sudo delete
+            ])
+        # PERMISSIVE and CUSTOM have minimal restrictions
+        
+        return base_patterns
+    
+    def extract_commands(self, text: str) -> List[str]:
+        """Extract commands from text with improved parsing"""
         commands = []
         lines = text.split('\n')
         
+        in_code_block = False
+        code_block_lang = None
+        
         for line in lines:
-            line = line.strip()
+            stripped = line.strip()
             
-            # Remove markdown code blocks
-            line = re.sub(r'```(?:bash|sh|shell)?', '', line).strip()
-            
-            # Skip empty or comment lines
-            if not line or line.startswith('#') or line.startswith('//'):
+            # Handle code blocks
+            if stripped.startswith('```'):
+                if not in_code_block:
+                    in_code_block = True
+                    code_block_lang = stripped[3:].strip()
+                else:
+                    in_code_block = False
+                    code_block_lang = None
                 continue
             
-            # Look for lines that seem like commands (start with common command words)
-            # Simple heuristic: if line has spaces and looks like a command
-            if ' ' in line or any(line.startswith(cmd) for cmd in ['ping', 'dig', 'nmap', 'curl', 'wget', 'ls', 'cat', 'grep', 'whoami', 'ssh', 'nc', 'nslookup', 'whois', 'traceroute', 'host', 'netstat', 'ss', 'ps', 'find']):
-                if line not in commands:
-                    commands.append(line)
+            # Only process lines in bash/shell code blocks or that look like commands
+            if in_code_block:
+                if code_block_lang in ['bash', 'sh', 'shell', '']:
+                    if stripped and not stripped.startswith('#'):
+                        commands.append(stripped)
+            else:
+                # Check if line looks like a command (starts with common command or has $)
+                if stripped.startswith('$ '):
+                    commands.append(stripped[2:])
+                elif any(stripped.startswith(cmd) for cmd in 
+                        ['ping', 'dig', 'nmap', 'curl', 'wget', 'ls', 'cat', 'grep',
+                         'nslookup', 'whois', 'traceroute', 'host', 'netstat', 'ss']):
+                    commands.append(stripped)
         
-        return commands
+        return list(dict.fromkeys(commands))  # Remove duplicates, preserve order
     
-    @staticmethod
-    def validate_command(cmd_string: str) -> Tuple[bool, str, Optional[Dict]]:
+    def validate(self, cmd_string: str) -> Tuple[bool, str, Optional[CommandInfo]]:
         """
-        Validate command with minimal restrictions
+        Validate command with risk assessment
         Returns: (is_valid, message, command_info)
         """
         try:
-            # Parse command safely
+            # Parse command
             parts = shlex.split(cmd_string)
             if not parts:
                 return False, "Empty command", None
             
             base_cmd = parts[0]
             
-            # Check for blocked patterns only (very minimal)
-            full_cmd = ' '.join(parts)
-            for pattern in BLOCKED_PATTERNS:
-                if re.search(pattern, full_cmd, re.IGNORECASE):
-                    return False, f"Command contains blocked pattern", None
+            # Check blocked patterns
+            for pattern in self.blocked_patterns:
+                if re.search(pattern, cmd_string, re.IGNORECASE):
+                    return False, f"Blocked: matches safety pattern '{pattern}'", None
             
-            return True, "Command validated successfully", {'timeout': DEFAULT_TIMEOUT}
+            # Get command metadata
+            cmd_info = CommandDatabase.get_command_info(base_cmd)
+            if not cmd_info:
+                # Unknown command - create default info
+                cmd_info = CommandInfo(base_cmd, CommandRisk.MEDIUM, timeout=30)
+            
+            # Risk-based validation
+            if self.safety_level == SafetyLevel.STRICT:
+                if cmd_info.risk_level.value in ['high', 'critical']:
+                    return False, f"Command risk too high for STRICT mode", cmd_info
+            
+            # Check for root requirement
+            if cmd_info.requires_root and 'sudo' not in cmd_string:
+                return True, "Note: Command may require root privileges", cmd_info
+            
+            return True, "Validated", cmd_info
             
         except ValueError as e:
             return False, f"Parse error: {str(e)}", None
         except Exception as e:
             return False, f"Validation error: {str(e)}", None
     
-    @staticmethod
-    def execute_safe(cmd_string: str, timeout: int = 15) -> Tuple[bool, str]:
+    def execute(self, cmd_string: str, timeout: Optional[int] = None) -> Tuple[bool, str]:
         """
-        Execute validated command safely
+        Execute validated command with safety measures
         Returns: (success, output)
         """
         try:
-            # Double-check validation
-            is_valid, msg, cmd_info = CommandValidator.validate_command(cmd_string)
+            # Re-validate
+            is_valid, msg, cmd_info = self.validate(cmd_string)
             if not is_valid:
                 return False, f"Validation failed: {msg}"
             
-            # Use default timeout
-            if cmd_info and 'timeout' in cmd_info:
-                timeout = cmd_info['timeout']
+            # Use command-specific timeout
+            if timeout is None:
+                timeout = cmd_info.timeout if cmd_info else 30
             
-            # Parse and execute with shell=False for security
+            # Parse and execute
             parts = shlex.split(cmd_string)
+            
             result = subprocess.run(
                 parts,
                 capture_output=True,
@@ -321,245 +778,538 @@ class CommandValidator:
                 shell=False  # Critical: Never use shell=True
             )
             
-            # Get output
+            # Process output
             output = result.stdout.strip() if result.stdout else result.stderr.strip()
             
             if not output:
-                output = f"Command executed (exit code: {result.returncode})"
+                output = f"Command completed (exit code: {result.returncode})"
+            
+            success = result.returncode == 0
             
             # Log execution
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             try:
                 with open(LOG_FILE, 'a') as f:
                     f.write(f"[{timestamp}] EXECUTED: {cmd_string}\n")
-                    f.write(f"[{timestamp}] OUTPUT: {output[:200]}\n")
+                    f.write(f"[{timestamp}] STATUS: {'SUCCESS' if success else 'FAILED'}\n")
+                    f.write(f"[{timestamp}] OUTPUT: {output[:200]}\n\n")
             except:
                 pass
             
-            return True, output
+            return success, output
             
         except subprocess.TimeoutExpired:
             return False, f"{Colors.YELLOW}⏱️  Command timeout ({timeout}s){Colors.END}"
         except FileNotFoundError:
-            return False, f"{Colors.RED}❌ Command not found. Is it installed?{Colors.END}"
+            return False, f"{Colors.RED}❌ Command '{parts[0]}' not found. Is it installed?{Colors.END}"
+        except PermissionError:
+            return False, f"{Colors.RED}❌ Permission denied. May require elevated privileges.{Colors.END}"
         except Exception as e:
             return False, f"{Colors.RED}❌ Execution error: {str(e)}{Colors.END}"
 
+# ============================================================================
+# User Interface
+# ============================================================================
 
-def print_banner():
-    """Display startup banner"""
-    banner = f"""{Colors.CYAN}{Colors.BOLD}
-D)dddd     G)gggg P)ppppp  T)tttttt 
-D)   dd   G)      P)    pp    T)    
-D)    dd G)  ggg  P)ppppp     T)    
-D)    dd G)    gg P)          T)    
-D)    dd  G)   gg P)          T)    
-D)ddddd    G)ggg  P)          T)    
-                                    
-                                    
+class EnhancedUI:
+    """Enhanced user interface with better formatting"""
+    
+    @staticmethod
+    def print_banner():
+        """Display enhanced startup banner"""
+        banner = f"""{Colors.CYAN}{Colors.BOLD}
+╔═══════════════════════════════════════════════════════════╗
+║  ____            _                  ____ ____ _____       ║
+║ |  _ \\ ___  ___ | |_ _ __ ___  _   _ / ___|  _ \\_   _|  ║
+║ | | | / _ \\/ __|| __| '__/ _ \\| | | | | _ | |_) || |    ║
+║ | |_| |  __/\\__ \\| |_| | | (_) | |_| | |_| |  __/ | |    ║
+║ |____/ \\___||___/ \\__|_|  \\___/ \\__, |\\____|_|    |_|    ║
+║                                  |___/                     ║
+║                                                            ║
+║            Enhanced v10.0 - Intelligent & Flexible        ║
+╚═══════════════════════════════════════════════════════════╝
 {Colors.END}"""
-    print(banner)
+        print(banner)
+    
+    @staticmethod
+    def print_section(title: str, content: str = ""):
+        """Print formatted section"""
+        print(f"\n{Colors.BOLD}{Colors.CYAN}{'─' * 60}{Colors.END}")
+        print(f"{Colors.BOLD}{Colors.WHITE}{title}{Colors.END}")
+        if content:
+            print(f"{Colors.CYAN}{'─' * 60}{Colors.END}")
+            print(content)
+        print(f"{Colors.CYAN}{'─' * 60}{Colors.END}\n")
+    
+    @staticmethod
+    def print_command(cmd: str, risk_level: CommandRisk = None):
+        """Print command with risk indicator"""
+        risk_colors = {
+            CommandRisk.SAFE: Colors.GREEN,
+            CommandRisk.LOW: Colors.CYAN,
+            CommandRisk.MEDIUM: Colors.YELLOW,
+            CommandRisk.HIGH: Colors.RED,
+            CommandRisk.CRITICAL: Colors.MAGENTA
+        }
+        
+        risk_color = risk_colors.get(risk_level, Colors.CYAN)
+        risk_text = f"[{risk_level.value.upper()}]" if risk_level else ""
+        
+        print(f"{Colors.BOLD}💻 Command:{Colors.END} {risk_color}{cmd}{Colors.END} {risk_text}")
+    
+    @staticmethod
+    def confirm(prompt: str, default: bool = False) -> bool:
+        """Enhanced confirmation prompt"""
+        default_text = "[Y/n]" if default else "[y/N]"
+        response = input(f"{Colors.YELLOW}{prompt} {default_text}:{Colors.END} ").strip().lower()
+        
+        if not response:
+            return default
+        return response in ['y', 'yes']
+    
+    @staticmethod
+    def select_from_list(title: str, items: List[Tuple[str, str]], default: int = 0) -> int:
+        """Interactive list selection"""
+        print(f"\n{Colors.BOLD}{title}{Colors.END}\n")
+        
+        for i, (key, description) in enumerate(items, 1):
+            print(f"{Colors.CYAN}[{i}]{Colors.END} {key}")
+            if description:
+                print(f"    {Colors.DIM}{description}{Colors.END}")
+        
+        while True:
+            choice = input(f"\n{Colors.BOLD}Select [1-{len(items)}] (default: {default + 1}): {Colors.END}").strip()
+            
+            if not choice:
+                return default
+            
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(items):
+                    return idx
+            except ValueError:
+                pass
+            
+            print(f"{Colors.RED}Invalid selection. Try again.{Colors.END}")
 
+# ============================================================================
+# Main Application
+# ============================================================================
 
-def get_api_key() -> Optional[str]:
-    """Get API key from file or environment"""
-    # Try environment variable first
-    if os.getenv("OPENROUTER_API_KEY"):
-        return os.getenv("OPENROUTER_API_KEY").strip()
+class DestroyGPT:
+    """Main application class"""
     
-    # Try config file
-    if API_KEY_FILE.exists():
-        try:
-            return API_KEY_FILE.read_text().strip()
-        except:
-            pass
+    def __init__(self):
+        self.config = ConfigManager()
+        self.ui = EnhancedUI()
+        self.plugin_manager = PluginManager(self.config)
+        self.ai: Optional[IntelligentAI] = None
+        self.validator: Optional[SmartCommandValidator] = None
+        self.user_context: Optional[UserContext] = None
+        
+    def initialize(self):
+        """Initialize application"""
+        self.ui.print_banner()
+        
+        # Load plugins
+        print(f"{Colors.BOLD}Loading plugins...{Colors.END}")
+        self.plugin_manager.load_plugins()
+        
+        # Get API key
+        api_key = self._get_api_key()
+        if not api_key:
+            print(f"{Colors.RED}❌ No API key provided. Cannot continue.{Colors.END}")
+            sys.exit(1)
+        
+        # Select model
+        model_id = self._select_model()
+        
+        # Load or create user context
+        self.user_context = self._load_user_context()
+        
+        # Initialize components
+        self.ai = IntelligentAI(api_key, model_id, self.config, self.user_context)
+        
+        safety_level = SafetyLevel(self.config.get('safety_level', 'moderate'))
+        self.validator = SmartCommandValidator(safety_level)
+        
+        # Show welcome message
+        self._show_welcome()
     
-    # Prompt user
-    print(f"{Colors.YELLOW}No API key found.{Colors.END}")
-    print(f"Get one free at: {Colors.CYAN}https://openrouter.ai/keys{Colors.END}")
-    
-    key = input(f"\n{Colors.BOLD}Enter your OpenRouter API key: {Colors.END}").strip()
-    if key:
+    def _get_api_key(self) -> Optional[str]:
+        """Get API key from various sources"""
+        # Environment variable
+        if os.getenv("OPENROUTER_API_KEY"):
+            return os.getenv("OPENROUTER_API_KEY").strip()
+        
+        # Config file
+        if API_KEY_FILE.exists():
+            try:
+                return API_KEY_FILE.read_text().strip()
+            except:
+                pass
+        
+        # Prompt user
+        print(f"\n{Colors.YELLOW}No API key found.{Colors.END}")
+        print(f"Get one free at: {Colors.CYAN}https://openrouter.ai/keys{Colors.END}")
+        
+        key = input(f"\n{Colors.BOLD}Enter your OpenRouter API key (or press Enter to exit): {Colors.END}").strip()
+        if not key:
+            return None
+        
         try:
             API_KEY_FILE.write_text(key)
             API_KEY_FILE.chmod(0o600)
-            print(f"{Colors.GREEN}✓ API key saved securely{Colors.END}\n")
+            print(f"{Colors.GREEN}✓ API key saved securely{Colors.END}")
             return key
         except Exception as e:
             print(f"{Colors.YELLOW}⚠️  Could not save key: {e}{Colors.END}")
             return key
     
-    return None
-
-
-def select_model() -> str:
-    """Interactive model selection"""
-    print(f"\n{Colors.BOLD}Available AI Models:{Colors.END}\n")
+    def _select_model(self) -> str:
+        """Interactive model selection"""
+        models = AIModelProvider.list_models()
+        items = [
+            (info['name'], f"{info['provider']} | {info['best_for']}")
+            for _, info in models
+        ]
+        
+        default_model = self.config.get('default_model', 'openai/gpt-4o')
+        default_idx = next((i for i, (mid, _) in enumerate(models) if mid == default_model), 0)
+        
+        selected_idx = self.ui.select_from_list("Available AI Models", items, default_idx)
+        model_id = models[selected_idx][0]
+        
+        print(f"\n{Colors.GREEN}✓ Using: {models[selected_idx][1]['name']}{Colors.END}")
+        
+        return model_id
     
-    for key, model in MODELS.items():
-        print(f"{Colors.CYAN}[{key}]{Colors.END} {Colors.BOLD}{model['name']}{Colors.END}")
-        print(f"    Speed: {model['speed']} | Quality: {model['quality']}")
-        print(f"    Best for: {model['best_for']}\n")
+    def _load_user_context(self) -> UserContext:
+        """Load or create user context"""
+        if CONTEXT_FILE.exists():
+            try:
+                with open(CONTEXT_FILE, 'r') as f:
+                    data = json.load(f)
+                    # Handle safety_profile enum
+                    if 'safety_profile' in data:
+                        data['safety_profile'] = SafetyLevel(data['safety_profile'])
+                    return UserContext(**data)
+            except:
+                pass
+        
+        # Create new context
+        context = UserContext()
+        context.safety_profile = SafetyLevel(self.config.get('safety_level', 'moderate'))
+        return context
     
-    choice = input(f"{Colors.BOLD}Select model [1-{len(MODELS)}] (default: 1): {Colors.END}").strip()
+    def _show_welcome(self):
+        """Display welcome message and quick start"""
+        safety_indicator = {
+            SafetyLevel.STRICT: f"{Colors.GREEN}STRICT{Colors.END}",
+            SafetyLevel.MODERATE: f"{Colors.YELLOW}MODERATE{Colors.END}",
+            SafetyLevel.PERMISSIVE: f"{Colors.RED}PERMISSIVE{Colors.END}"
+        }
+        
+        print(f"\n{Colors.BOLD}Session Information:{Colors.END}")
+        print(f"  Safety Level: {safety_indicator.get(self.user_context.safety_profile, 'CUSTOM')}")
+        print(f"  Skill Level: {Colors.CYAN}{self.user_context.skill_level.title()}{Colors.END}")
+        print(f"  Style: {Colors.CYAN}{self.user_context.preferred_style.title()}{Colors.END}")
+        
+        print(f"\n{Colors.BOLD}Quick Commands:{Colors.END}")
+        print(f"  {Colors.CYAN}help{Colors.END}      - Show all commands")
+        print(f"  {Colors.CYAN}config{Colors.END}    - Adjust settings")
+        print(f"  {Colors.CYAN}plugins{Colors.END}   - Manage plugins")
+        print(f"  {Colors.CYAN}exit{Colors.END}      - Quit program")
+        
+        print(f"\n{Colors.YELLOW}⚠️  Legal Reminder: Only test authorized systems!{Colors.END}\n")
+        
+        self.ai.log_session("=== Enhanced Session Started ===")
     
-    if choice not in MODELS:
-        choice = "1"
+    def _handle_builtin_command(self, cmd: str) -> bool:
+        """Handle built-in commands. Returns True if handled."""
+        
+        if cmd in ['exit', 'quit']:
+            print(f"\n{Colors.GREEN}👋 Goodbye! Stay ethical and keep learning!{Colors.END}")
+            self.ai.log_session("=== Session Ended ===")
+            self.ai.save_context()
+            return True
+        
+        elif cmd == 'help':
+            self._show_help()
+            return True
+        
+        elif cmd == 'config':
+            self._show_config_menu()
+            return True
+        
+        elif cmd == 'plugins':
+            self._show_plugin_info()
+            return True
+        
+        elif cmd == 'history':
+            self._show_history()
+            return True
+        
+        elif cmd == 'clear':
+            os.system('clear' if os.name != 'nt' else 'cls')
+            return True
+        
+        elif cmd == 'stats':
+            self._show_stats()
+            return True
+        
+        elif cmd == 'topics':
+            self._show_topics()
+            return True
+        
+        # Check plugin custom commands
+        elif cmd in self.plugin_manager.custom_commands:
+            self.plugin_manager.custom_commands[cmd]()
+            return True
+        
+        return False
     
-    selected = MODELS[choice]
-    print(f"{Colors.GREEN}✓ Using: {selected['name']}{Colors.END}\n")
-    
-    return selected['id']
+    def _show_help(self):
+        """Display comprehensive help"""
+        help_text = f"""
+{Colors.BOLD}DestroyGPT Enhanced - Command Reference{Colors.END}
 
-
-def show_help():
-    """Display help information"""
-    help_text = f"""
-{Colors.BOLD}DestroyGPT - Available Commands:{Colors.END}
-
-{Colors.CYAN}help{Colors.END}        Show this help message
-{Colors.CYAN}history{Colors.END}     Display recent conversation
-{Colors.CYAN}commands{Colors.END}    List all safe commands
-{Colors.CYAN}clear{Colors.END}       Clear the screen
-{Colors.CYAN}exit/quit{Colors.END}   Exit the program
+{Colors.BOLD}Built-in Commands:{Colors.END}
+  {Colors.CYAN}help{Colors.END}        Show this help message
+  {Colors.CYAN}config{Colors.END}      Configure settings (safety, skill level, etc.)
+  {Colors.CYAN}plugins{Colors.END}     View loaded plugins and custom commands
+  {Colors.CYAN}history{Colors.END}     Display conversation history
+  {Colors.CYAN}topics{Colors.END}      Show conversation topics
+  {Colors.CYAN}stats{Colors.END}       Display session statistics
+  {Colors.CYAN}clear{Colors.END}       Clear the screen
+  {Colors.CYAN}exit/quit{Colors.END}   Exit the program
 
 {Colors.BOLD}How to Use:{Colors.END}
-- Ask questions about security concepts
-- Request command examples
-- Learn about networking and protocols
-- Practice safe reconnaissance techniques
+  • Ask questions about security concepts
+  • Request command examples for specific tasks
+  • Learn about tools and techniques
+  • Practice reconnaissance on authorized targets
 
 {Colors.BOLD}Example Queries:{Colors.END}
-{Colors.GREEN}• how do I check DNS records?
-• explain what ping does
-• show me how to trace a route to google.com
-• what is the difference between dig and nslookup?{Colors.END}
+  {Colors.GREEN}• "How do I enumerate subdomains?"
+  • "Show me how to use nmap for service detection"
+  • "Explain DNS zone transfers"
+  • "What's the difference between TCP and UDP scanning?"{Colors.END}
 
-{Colors.YELLOW}Remember: Only test systems you own or have permission to test!{Colors.END}
+{Colors.BOLD}Safety Levels:{Colors.END}
+  {Colors.GREEN}STRICT{Colors.END}     - Maximum safety, educational focus
+  {Colors.YELLOW}MODERATE{Colors.END}   - Balanced (default)
+  {Colors.RED}PERMISSIVE{Colors.END} - Minimal restrictions, expert use
+
+{Colors.YELLOW}Always ensure you have authorization before testing any systems!{Colors.END}
 """
-    print(help_text)
-
-
-def show_commands():
-    """Display information about command usage"""
-    print(f"\n{Colors.BOLD}Command Usage:{Colors.END}\n")
-    print(f"DestroyGPT can suggest and execute various commands for security learning.")
-    print(f"All commands require your confirmation before execution.")
-    print(f"\nMinimal restrictions applied - use responsibly!\n")
-
-
-def main():
-    """Main application loop"""
+        print(help_text)
     
-    # Display banner
-    print_banner()
+    def _show_config_menu(self):
+        """Interactive configuration menu"""
+        print(f"\n{Colors.BOLD}Configuration Menu{Colors.END}\n")
+        print(f"1. Safety Level: {self.user_context.safety_profile.value}")
+        print(f"2. Skill Level: {self.user_context.skill_level}")
+        print(f"3. Response Style: {self.user_context.preferred_style}")
+        print(f"4. Show AI Thinking: {self.config.get('show_thinking', False)}")
+        print(f"5. Command Logging: {self.config.get('log_commands', True)}")
+        print(f"6. Back to main")
+        
+        choice = input(f"\n{Colors.BOLD}Select option [1-6]: {Colors.END}").strip()
+        
+        if choice == '1':
+            levels = [(l.value, "") for l in SafetyLevel]
+            idx = self.ui.select_from_list("Select Safety Level", levels)
+            self.user_context.safety_profile = list(SafetyLevel)[idx]
+            self.config.set('safety_level', self.user_context.safety_profile.value)
+            self.validator = SmartCommandValidator(self.user_context.safety_profile)
+            print(f"{Colors.GREEN}✓ Safety level updated{Colors.END}")
+        
+        elif choice == '2':
+            levels = [
+                ("beginner", "New to security"),
+                ("intermediate", "Some experience"),
+                ("advanced", "Experienced practitioner"),
+                ("expert", "Security professional")
+            ]
+            idx = self.ui.select_from_list("Select Skill Level", levels)
+            self.user_context.skill_level = levels[idx][0]
+            print(f"{Colors.GREEN}✓ Skill level updated{Colors.END}")
+        
+        elif choice == '3':
+            styles = [
+                ("brief", "Concise responses"),
+                ("detailed", "Comprehensive explanations"),
+                ("technical", "Technical depth")
+            ]
+            idx = self.ui.select_from_list("Select Response Style", styles)
+            self.user_context.preferred_style = styles[idx][0]
+            print(f"{Colors.GREEN}✓ Style updated{Colors.END}")
+        
+        elif choice == '4':
+            current = self.config.get('show_thinking', False)
+            self.config.set('show_thinking', not current)
+            print(f"{Colors.GREEN}✓ Show thinking: {not current}{Colors.END}")
+        
+        elif choice == '5':
+            current = self.config.get('log_commands', True)
+            self.config.set('log_commands', not current)
+            print(f"{Colors.GREEN}✓ Command logging: {not current}{Colors.END}")
+        
+        self.ai.save_context()
     
-    # Get API key
-    api_key = get_api_key()
-    if not api_key:
-        print(f"{Colors.RED}❌ No API key provided. Exiting.{Colors.END}")
-        sys.exit(1)
+    def _show_plugin_info(self):
+        """Display plugin information"""
+        print(f"\n{Colors.BOLD}Loaded Plugins:{Colors.END}\n")
+        
+        if not self.plugin_manager.plugins:
+            print(f"{Colors.YELLOW}No plugins loaded{Colors.END}")
+            print(f"\nAdd plugins to: {PLUGINS_DIR}")
+        else:
+            for plugin in self.plugin_manager.plugins:
+                print(f"{Colors.GREEN}✓{Colors.END} {Colors.BOLD}{plugin.name}{Colors.END} v{plugin.version}")
+        
+        if self.plugin_manager.custom_commands:
+            print(f"\n{Colors.BOLD}Custom Commands:{Colors.END}")
+            for cmd_name in self.plugin_manager.custom_commands:
+                print(f"  {Colors.CYAN}{cmd_name}{Colors.END}")
+        
+        print()
     
-    # Select model
-    model_id = select_model()
+    def _show_history(self):
+        """Display conversation history"""
+        print(f"\n{Colors.BOLD}Conversation History:{Colors.END}\n")
+        
+        if not self.ai.history:
+            print(f"{Colors.YELLOW}No history yet{Colors.END}")
+            return
+        
+        for i, msg in enumerate(self.ai.history[-10:], 1):
+            role = f"{Colors.CYAN}You{Colors.END}" if msg["role"] == "user" else f"{Colors.GREEN}AI{Colors.END}"
+            content = msg["content"][:150] + "..." if len(msg["content"]) > 150 else msg["content"]
+            print(f"{i}. {role}: {content}\n")
     
-    # Initialize AI
-    ai = EnhancedAI(api_key, model_id)
-    ai.log_session("=== New Session Started ===")
+    def _show_stats(self):
+        """Display session statistics"""
+        session_duration = datetime.now() - self.ai.session_start
+        
+        print(f"\n{Colors.BOLD}Session Statistics:{Colors.END}\n")
+        print(f"Duration: {session_duration}")
+        print(f"Queries: {len(self.ai.history) // 2}")
+        print(f"Commands executed: {len(self.user_context.last_commands)}")
+        print(f"Topics discussed: {len(self.ai.conversation_topics)}")
+        print()
     
-    # Show quick help
-    print(f"{Colors.BOLD}Quick Start:{Colors.END}")
-    print(f"  Type {Colors.CYAN}'help'{Colors.END} for commands")
-    print(f"  Type {Colors.CYAN}'exit'{Colors.END} to quit")
-    print(f"  Ask any security question to begin!\n")
+    def _show_topics(self):
+        """Show conversation topics"""
+        print(f"\n{Colors.BOLD}Conversation Topics:{Colors.END}\n")
+        
+        if not self.ai.conversation_topics:
+            print(f"{Colors.YELLOW}No topics detected yet{Colors.END}")
+        else:
+            print(", ".join(self.ai.conversation_topics))
+        
+        print()
     
-    print(f"{Colors.YELLOW}⚠️  Legal Reminder: Only test authorized systems{Colors.END}\n")
-    
-    # Main interaction loop
-    last_command = None
-    
-    while True:
-        try:
-            # Get user input
-            user_input = input(f"{Colors.BOLD}{Colors.BLUE}${Colors.END} ").strip()
-            
-            if not user_input:
-                continue
-            
-            # Handle built-in commands
-            if user_input.lower() in ['exit', 'quit']:
-                print(f"\n{Colors.GREEN}👋 Goodbye! Stay ethical!{Colors.END}")
-                ai.log_session("=== Session Ended ===")
-                break
-            
-            if user_input.lower() == 'help':
-                show_help()
-                continue
-            
-            if user_input.lower() == 'commands':
-                show_commands()
-                continue
-            
-            if user_input.lower() == 'clear':
-                os.system('clear' if os.name != 'nt' else 'cls')
-                continue
-            
-            if user_input.lower() == 'history':
-                print(f"\n{Colors.BOLD}Recent Conversation:{Colors.END}\n")
-                for msg in ai.history[-10:]:
-                    role = f"{Colors.CYAN}You{Colors.END}" if msg["role"] == "user" else f"{Colors.GREEN}AI{Colors.END}"
-                    content = msg["content"][:100] + "..." if len(msg["content"]) > 100 else msg["content"]
-                    print(f"{role}: {content}\n")
-                continue
-            
-            # Query AI
-            print()
-            context = {'last_command': last_command}
-            response = ai.ask(user_input, context)
-            
-            # Display response
-            print(f"{Colors.GREEN}AI:{Colors.END} {response}\n")
-            
-            # Extract and validate commands
-            commands = CommandValidator.extract_commands(response)
-            
-            if commands:
+    def run(self):
+        """Main application loop"""
+        
+        while True:
+            try:
+                # Get user input
+                user_input = input(f"{Colors.BOLD}{Colors.BLUE}❯{Colors.END} ").strip()
+                
+                if not user_input:
+                    continue
+                
+                # Handle built-in commands
+                if self._handle_builtin_command(user_input.lower()):
+                    if user_input.lower() in ['exit', 'quit']:
+                        break
+                    continue
+                
+                # Check plugin interception
+                plugin_response = self.plugin_manager.on_query(user_input)
+                if plugin_response:
+                    print(f"\n{Colors.GREEN}Plugin:{Colors.END} {plugin_response}\n")
+                    continue
+                
+                # Query AI
+                print()
+                response = self.ai.ask(user_input, self.config.get('show_thinking', False))
+                
+                # Display response
+                print(f"{Colors.GREEN}AI:{Colors.END} {response}\n")
+                
+                # Extract and handle commands
+                commands = self.validator.extract_commands(response)
+                
                 for cmd in commands:
                     # Validate
-                    is_valid, msg, cmd_info = CommandValidator.validate_command(cmd)
+                    is_valid, msg, cmd_info = self.validator.validate(cmd)
                     
                     if is_valid:
-                        print(f"{Colors.CYAN}💻 Command:{Colors.END} {Colors.BOLD}{cmd}{Colors.END}")
+                        # Display command with risk level
+                        risk = cmd_info.risk_level if cmd_info else None
+                        self.ui.print_command(cmd, risk)
+                        
+                        # Plugin pre-execute hook
+                        should_continue, plugin_msg = self.plugin_manager.on_command_pre_execute(cmd)
+                        if not should_continue:
+                            print(f"{Colors.RED}⊘ Plugin blocked: {plugin_msg}{Colors.END}\n")
+                            continue
                         
                         # Ask for confirmation
-                        confirm = input(f"{Colors.YELLOW}Run this command? [y/N]:{Colors.END} ").strip().lower()
-                        
-                        if confirm == 'y':
+                        if self.ui.confirm("Run this command?", default=False):
                             print()
-                            success, output = CommandValidator.execute_safe(cmd)
+                            success, output = self.validator.execute(cmd)
                             
+                            # Display output
+                            color = Colors.GREEN if success else Colors.RED
+                            print(f"{color}{output}{Colors.END}\n")
+                            
+                            # Update context
                             if success:
-                                print(f"{Colors.GREEN}{output}{Colors.END}\n")
-                                last_command = cmd
-                            else:
-                                print(f"{output}\n")
+                                self.user_context.last_commands.append(cmd)
+                                if len(self.user_context.last_commands) > 10:
+                                    self.user_context.last_commands.pop(0)
+                            
+                            # Plugin post-execute hook
+                            self.plugin_manager.on_command_post_execute(cmd, output, success)
                         else:
                             print(f"{Colors.YELLOW}⊘ Skipped{Colors.END}\n")
                     else:
-                        print(f"{Colors.RED}⚠️  Command validation failed: {msg}{Colors.END}\n")
+                        print(f"{Colors.RED}⚠️  Validation failed: {msg}{Colors.END}\n")
             
-        except KeyboardInterrupt:
-            print(f"\n\n{Colors.GREEN}👋 Interrupted. Goodbye!{Colors.END}")
-            ai.log_session("=== Session Interrupted ===")
-            break
-        except Exception as e:
-            print(f"\n{Colors.RED}❌ Error: {str(e)}{Colors.END}\n")
-            continue
+            except KeyboardInterrupt:
+                print(f"\n\n{Colors.YELLOW}Interrupted. Type 'exit' to quit or press Ctrl+C again.{Colors.END}\n")
+                try:
+                    # Give them a chance to type exit
+                    input()
+                except KeyboardInterrupt:
+                    print(f"\n{Colors.GREEN}👋 Goodbye!{Colors.END}")
+                    self.ai.log_session("=== Session Interrupted ===")
+                    break
+            
+            except Exception as e:
+                print(f"\n{Colors.RED}❌ Error: {str(e)}{Colors.END}\n")
+                continue
 
+# ============================================================================
+# Entry Point
+# ============================================================================
 
-if __name__ == "__main__":
+def main():
+    """Application entry point"""
     try:
-        main()
+        app = DestroyGPT()
+        app.initialize()
+        app.run()
     except Exception as e:
         print(f"{Colors.RED}Fatal error: {str(e)}{Colors.END}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()

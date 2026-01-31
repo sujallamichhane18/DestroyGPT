@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-DestroyGPT v10.0 - Intelligent & Flexible AI Security Assistant
-FIXED VERSION: Safe command extraction
+
 """
 
 import os
